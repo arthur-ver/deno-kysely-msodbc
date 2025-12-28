@@ -17,7 +17,11 @@ export const SQL_INTEGER = 4;
 export const SQL_WVARCHAR = -9;
 
 export const odbcLib = Deno.dlopen("/opt/homebrew/lib/libmsodbcsql.18.dylib", {
-  SQLAllocHandle: { parameters: ["i16", "pointer", "pointer"], result: "i16" },
+  SQLAllocHandle: {
+    parameters: ["i16", "pointer", "pointer"],
+    result: "i16",
+    nonblocking: true,
+  },
   SQLDriverConnectW: {
     parameters: [
       "pointer",
@@ -30,6 +34,7 @@ export const odbcLib = Deno.dlopen("/opt/homebrew/lib/libmsodbcsql.18.dylib", {
       "u16",
     ],
     result: "i16",
+    nonblocking: true,
   },
   SQLGetDiagRecW: {
     parameters: [
@@ -44,18 +49,26 @@ export const odbcLib = Deno.dlopen("/opt/homebrew/lib/libmsodbcsql.18.dylib", {
     ],
     result: "i16",
   },
-  SQLDisconnect: { parameters: ["pointer"], result: "i16" },
-  SQLFreeHandle: { parameters: ["i16", "pointer"], result: "i16" },
-  SQLExecDirectW: { parameters: ["pointer", "pointer", "i32"], result: "i16" },
+  SQLDisconnect: { parameters: ["pointer"], result: "i16", nonblocking: true },
+  SQLFreeHandle: {
+    parameters: ["i16", "pointer"],
+    result: "i16",
+    nonblocking: true,
+  },
+  SQLExecDirectW: {
+    parameters: ["pointer", "pointer", "i32"],
+    result: "i16",
+    nonblocking: true,
+  },
 });
 
-export function allocHandle(
+export async function allocHandle(
   handleType: number,
   parentHandle: Deno.PointerValue
-): Deno.PointerValue {
+): Promise<Deno.PointerValue> {
   const handleBuf = new BigUint64Array(1);
 
-  const ret = odbcLib.symbols.SQLAllocHandle(
+  const ret = await odbcLib.symbols.SQLAllocHandle(
     handleType,
     parentHandle,
     Deno.UnsafePointer.of(handleBuf)
@@ -75,12 +88,12 @@ export function allocHandle(
   return Deno.UnsafePointer.create(rawHandle);
 }
 
-export function sqlDriverConnect(
+export async function sqlDriverConnect(
   connectionString: string,
   dbcHandle: Deno.PointerValue
-) {
+): Promise<void> {
   const connStrEncoded = strToUtf16(connectionString);
-  const ret = odbcLib.symbols.SQLDriverConnectW(
+  const ret = await odbcLib.symbols.SQLDriverConnectW(
     dbcHandle,
     null,
     Deno.UnsafePointer.of(connStrEncoded as any),
@@ -96,9 +109,12 @@ export function sqlDriverConnect(
   }
 }
 
-export function sqlExecDirect(sql: string, stmtHandle: Deno.PointerValue) {
+export async function sqlExecDirect(
+  sql: string,
+  stmtHandle: Deno.PointerValue
+): Promise<void> {
   const sqlEncoded = strToUtf16(sql);
-  const ret = odbcLib.symbols.SQLExecDirectW(
+  const ret = await odbcLib.symbols.SQLExecDirectW(
     stmtHandle,
     Deno.UnsafePointer.of(sqlEncoded as any),
     SQL_NTS

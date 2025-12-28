@@ -47,7 +47,7 @@ export class OdbcDriver implements Driver {
   }
 
   async init(): Promise<void> {
-    this.#envHandle = allocHandle(SQL_HANDLE_ENV, null);
+    this.#envHandle = await allocHandle(SQL_HANDLE_ENV, null);
   }
 
   async acquireConnection(): Promise<DatabaseConnection> {
@@ -75,9 +75,10 @@ export class OdbcDriver implements Driver {
 
   async destroy(): Promise<void> {
     await this.#pool.destroy();
-    if (this.#envHandle) {
-      odbcLib.symbols.SQLFreeHandle(SQL_HANDLE_ENV, this.#envHandle);
-      this.#envHandle = null;
-    }
+
+    if (this.#envHandle === null) return;
+
+    await odbcLib.symbols.SQLFreeHandle(SQL_HANDLE_ENV, this.#envHandle);
+    this.#envHandle = null;
   }
 }

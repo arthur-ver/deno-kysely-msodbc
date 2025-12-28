@@ -9,15 +9,13 @@ export class OdbcRequest<O> {
   constructor(query: CompiledQuery, dbcHandle: Deno.PointerValue) {
     this.#query = query;
     this.#dbcHandle = dbcHandle;
-
-    console.log("request constructed");
   }
 
   async execute(): Promise<QueryResult<O>> {
-    this.#allocateStmt();
+    await this.#allocateStmt();
 
     try {
-      this.#execDirect();
+      await this.#execDirect();
 
       const numAffectedRows = this.#getRowCount();
       const colCount = this.#getNumResultCols();
@@ -34,12 +32,12 @@ export class OdbcRequest<O> {
         numAffectedRows: numAffectedRows > 0n ? numAffectedRows : undefined,
       };
     } finally {
-      this.#freeStmt();
+      await this.#freeStmt();
     }
   }
 
   async *stream(chunkSize: number): AsyncIterableIterator<QueryResult<O>> {
-    this.#allocateStmt();
+    await this.#allocateStmt();
     try {
       this.#execDirect();
 
@@ -61,20 +59,19 @@ export class OdbcRequest<O> {
     }
   }
 
-  #allocateStmt() {
-    this.#stmtHandle = allocHandle(SQL_HANDLE_STMT, this.#dbcHandle);
+  async #allocateStmt() {
+    this.#stmtHandle = await allocHandle(SQL_HANDLE_STMT, this.#dbcHandle);
   }
 
-  #freeStmt() {
-    if (this.#stmtHandle) {
-      odbcLib.symbols.SQLFreeHandle(SQL_HANDLE_STMT, this.#stmtHandle);
-      this.#stmtHandle = null;
-    }
+  async #freeStmt() {
+    if (this.#stmtHandle === null) return;
+
+    await odbcLib.symbols.SQLFreeHandle(SQL_HANDLE_STMT, this.#stmtHandle);
+    this.#stmtHandle = null;
   }
 
-  #execDirect() {
-    console.log(this.#query.sql);
-    sqlExecDirect(this.#query.sql, this.#stmtHandle);
+  async #execDirect() {
+    await sqlExecDirect(this.#query.sql, this.#stmtHandle);
   }
 
   #formatValue(value: unknown): string {}

@@ -23,12 +23,13 @@ export class OdbcConnection implements DatabaseConnection {
   }
 
   async connect(): Promise<void> {
-    this.#dbcHandle = allocHandle(SQL_HANDLE_DBC, this.#envHandle);
+    this.#dbcHandle = await allocHandle(SQL_HANDLE_DBC, this.#envHandle);
 
     try {
-      sqlDriverConnect(this.#connectionString, this.#dbcHandle);
-    } catch {
-      this.destroy();
+      await sqlDriverConnect(this.#connectionString, this.#dbcHandle);
+    } catch (error) {
+      await this.destroy();
+      throw error;
     }
   }
 
@@ -58,11 +59,16 @@ export class OdbcConnection implements DatabaseConnection {
   async rollbackTransaction(): Promise<void> {}
 
   async destroy(): Promise<void> {
-    if (this.#dbcHandle) {
-      odbcLib.symbols.SQLDisconnect(this.#dbcHandle);
-      odbcLib.symbols.SQLFreeHandle(SQL_HANDLE_DBC, this.#dbcHandle);
-      this.#dbcHandle = null;
+    if (this.#dbcHandle === null) return;
+
+    try {
+      // just in case we weren't actually connected
+      await odbcLib.symbols.SQLDisconnect(this.#dbcHandle);
+    } catch {
+      /* ignore */
     }
+    await odbcLib.symbols.SQLFreeHandle(SQL_HANDLE_DBC, this.#dbcHandle);
+    this.#dbcHandle = null;
   }
 
   validate(): boolean {
