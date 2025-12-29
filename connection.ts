@@ -4,41 +4,40 @@ import {
   QueryResult,
   TransactionSettings,
 } from "@kysely/kysely";
-import {
-  odbcLib,
-  allocHandle,
-  sqlDriverConnect,
-  SQL_HANDLE_DBC,
-} from "./ffi.ts";
+import { odbcLib, allocHandle, driverConnect, SQL_HANDLE_DBC } from "./ffi.ts";
 import { OdbcRequest } from "./request.ts";
 
 export class OdbcConnection implements DatabaseConnection {
   readonly #connectionString: string;
+  #hasSocketError: boolean;
   #envHandle: Deno.PointerValue;
   #dbcHandle: Deno.PointerValue = null;
 
   constructor(connectionString: string, envHandle: Deno.PointerValue) {
     this.#connectionString = connectionString;
+    this.#hasSocketError = false;
     this.#envHandle = envHandle;
   }
 
-  async connect(): Promise<void> {
+  async connect(): Promise<this> {
     this.#dbcHandle = await allocHandle(SQL_HANDLE_DBC, this.#envHandle);
-
     try {
-      await sqlDriverConnect(this.#connectionString, this.#dbcHandle);
+      await driverConnect(this.#connectionString, this.#dbcHandle);
     } catch (error) {
-      await this.destroy();
+      this.#hasSocketError = true;
       throw error;
     }
+    return this;
   }
 
   async executeQuery<O>(compiledQuery: CompiledQuery): Promise<QueryResult<O>> {
-    if (!this.#dbcHandle) {
-      throw new Error("Connection is closed");
-    }
     const request = new OdbcRequest<O>(compiledQuery, this.#dbcHandle);
-    return request.execute();
+    const { rowCount, rows } = await request.execute();
+
+    return {
+      numAffectedRows: rowCount !== undefined ? BigInt(rowCount) : undefined,
+      rows,
+    };
   }
 
   async *streamQuery<O>(
@@ -71,7 +70,42 @@ export class OdbcConnection implements DatabaseConnection {
     this.#dbcHandle = null;
   }
 
-  validate(): boolean {
-    return this.#dbcHandle !== null;
+  async validate(): Promise<boolean> {
+    if (
+      this.#hasSocketError ||
+      this.#isConnectionClosed() ||
+      this.#dbcHandle === null
+    ) {
+      return false;
+    }
+
+    const compiledQuery = CompiledQuery.raw("select 1");
+    const request = new OdbcRequest<unknown>(compiledQuery, this.#dbcHandle);
+    try {
+      await request.execute();
+    } catch {
+      return false;
+    }
+
+    return true;
+  }
+
+  // TODO: implement isConnectionClosed()
+  #isConnectionClosed(): boolean {
+    return false;
+    //return "closed" in this.#connection && Boolean(this.#connection.closed);
+  }
+
+  async reset(): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      /*this.#connection.reset((error) => {
+        if (error) {
+          return reject(error);
+        }
+
+        resolve();
+      });*/
+      resolve();
+    });
   }
 }
