@@ -16,7 +16,23 @@ export const SQL_C_WCHAR = -8;
 export const SQL_INTEGER = 4;
 export const SQL_WVARCHAR = -9;
 
-export const odbcLib = Deno.dlopen("/opt/homebrew/lib/libmsodbcsql.18.dylib", {
+let libPath: string;
+
+switch (Deno.build.os) {
+  case "darwin":
+    libPath = "/opt/homebrew/lib/libmsodbcsql.18.dylib";
+    break;
+  case "linux":
+    libPath = "/opt/microsoft/msodbcsql18/lib64/";
+    break;
+  case "windows":
+    libPath = "C:\\Windows\\System32\\msodbcsql18.dll";
+    break;
+  default:
+    throw new Error(`Unsupported OS: ${Deno.build.os}`);
+}
+
+export const odbcLib = Deno.dlopen(libPath, {
   SQLAllocHandle: {
     parameters: ["i16", "pointer", "pointer"],
     result: "i16",
@@ -88,7 +104,7 @@ export async function allocHandle(
   return Deno.UnsafePointer.create(rawHandle);
 }
 
-export async function sqlDriverConnect(
+export async function driverConnect(
   connectionString: string,
   dbcHandle: Deno.PointerValue
 ): Promise<void> {
@@ -109,7 +125,7 @@ export async function sqlDriverConnect(
   }
 }
 
-export async function sqlExecDirect(
+export async function execDirect(
   sql: string,
   stmtHandle: Deno.PointerValue
 ): Promise<void> {
