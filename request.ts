@@ -1,23 +1,41 @@
 import { CompiledQuery, QueryResult } from "@kysely/kysely";
-import { odbcLib, allocHandle, sqlExecDirect, SQL_HANDLE_STMT } from "./ffi.ts";
+import { odbcLib, allocHandle, execDirect, SQL_HANDLE_STMT } from "./ffi.ts";
 
 export class OdbcRequest<O> {
-  #query: CompiledQuery;
-  #dbcHandle: Deno.PointerValue;
+  readonly #compiledQuery: CompiledQuery;
+  readonly #dbcHandle: Deno.PointerValue;
+  readonly #rows: O[];
+  readonly #streamChunkSize: number | undefined;
+  readonly #subscribers: Record<
+    string,
+    (event: "completed" | "chunkReady" | "error", error?: unknown) => void
+  >;
+  #rowCount: number | undefined;
+
   #stmtHandle: Deno.PointerValue = null;
 
-  constructor(query: CompiledQuery, dbcHandle: Deno.PointerValue) {
-    this.#query = query;
+  constructor(
+    compiledQuery: CompiledQuery,
+    dbcHandle: Deno.PointerValue,
+    streamChunkSize?: number
+  ) {
+    this.#compiledQuery = compiledQuery;
     this.#dbcHandle = dbcHandle;
+    this.#rows = [];
+    this.#streamChunkSize = streamChunkSize;
+    this.#subscribers = {};
   }
 
-  async execute(): Promise<QueryResult<O>> {
-    await this.#allocateStmt();
+  async execute(): Promise<{
+    rowCount: number | undefined;
+    rows: O[];
+  }> {
+    this.#stmtHandle = await allocHandle(SQL_HANDLE_STMT, this.#dbcHandle);
 
     try {
-      await this.#execDirect();
+      await execDirect(this.#compiledQuery.sql, this.#stmtHandle);
 
-      const numAffectedRows = this.#getRowCount();
+      /*const numAffectedRows = this.#getRowCount();
       const colCount = this.#getNumResultCols();
       const rows: O[] = [];
       if (colCount > 0) {
@@ -30,14 +48,15 @@ export class OdbcRequest<O> {
       return {
         rows,
         numAffectedRows: numAffectedRows > 0n ? numAffectedRows : undefined,
-      };
+      };*/
+      return {} as any;
     } finally {
       await this.#freeStmt();
     }
   }
 
   async *stream(chunkSize: number): AsyncIterableIterator<QueryResult<O>> {
-    await this.#allocateStmt();
+    /*await this.#allocateStmt();
     try {
       this.#execDirect();
 
@@ -56,12 +75,10 @@ export class OdbcRequest<O> {
       if (chunk.length > 0) yield { rows: chunk };
     } finally {
       this.#freeStmt();
-    }
+    }*/
   }
 
-  async #allocateStmt() {
-    this.#stmtHandle = await allocHandle(SQL_HANDLE_STMT, this.#dbcHandle);
-  }
+  async #allocateStmt() {}
 
   async #freeStmt() {
     if (this.#stmtHandle === null) return;
@@ -70,21 +87,17 @@ export class OdbcRequest<O> {
     this.#stmtHandle = null;
   }
 
-  async #execDirect() {
-    await sqlExecDirect(this.#query.sql, this.#stmtHandle);
-  }
+  #formatValue(value: unknown) {}
 
-  #formatValue(value: unknown): string {}
+  #fetchOne() {}
 
-  #fetchOne(): O | null {}
+  #getRowCount() {}
 
-  #getRowCount(): bigint {}
+  #getNumResultCols() {}
 
-  #getNumResultCols(): number {}
+  #describeColumns(colCount: number) {}
 
-  #describeColumns(colCount: number): string[] {}
+  #fetch() {}
 
-  #fetch(): boolean {}
-
-  #readRow(colNames: string[]): O {}
+  #readRow(colNames: string[]) {}
 }
