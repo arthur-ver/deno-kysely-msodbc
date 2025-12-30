@@ -1,5 +1,11 @@
 import { CompiledQuery, QueryResult } from "@kysely/kysely";
-import { odbcLib, allocHandle, execDirect, SQL_HANDLE_STMT } from "./ffi.ts";
+import {
+  odbcLib,
+  allocHandle,
+  execDirect,
+  SQL_HANDLE_STMT,
+  rowCount,
+} from "./ffi.ts";
 
 export class OdbcRequest<O> {
   readonly #compiledQuery: CompiledQuery;
@@ -34,6 +40,9 @@ export class OdbcRequest<O> {
 
     try {
       await execDirect(this.#compiledQuery.sql, this.#stmtHandle);
+      const numAffectedRows = await rowCount(this.#stmtHandle);
+      console.log(numAffectedRows);
+      const rows: O[] = [];
 
       /*const numAffectedRows = this.#getRowCount();
       const colCount = this.#getNumResultCols();
@@ -81,8 +90,6 @@ export class OdbcRequest<O> {
   async #allocateStmt() {}
 
   async #freeStmt() {
-    if (this.#stmtHandle === null) return;
-
     await odbcLib.symbols.SQLFreeHandle(SQL_HANDLE_STMT, this.#stmtHandle);
     this.#stmtHandle = null;
   }
