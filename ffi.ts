@@ -76,6 +76,10 @@ export const odbcLib = Deno.dlopen(libPath, {
     result: "i16",
     nonblocking: true,
   },
+  SQLRowCount: {
+    parameters: ["pointer", "pointer"],
+    result: "i16",
+  },
 });
 
 export async function allocHandle(
@@ -148,6 +152,23 @@ export async function execDirect(
       )}\nSQL: ${sql}`
     );
   }
+}
+
+export async function rowCount(handle: Deno.PointerValue): Promise<number> {
+  const rowCountBuf = new BigUint64Array(1);
+
+  const ret = await odbcLib.symbols.SQLRowCount(
+    handle,
+    Deno.UnsafePointer.of(rowCountBuf)
+  );
+
+  if (ret !== SQL_SUCCESS && ret !== SQL_SUCCESS_WITH_INFO) {
+    throw new Error(`SQLRowCount failed (${ret})`);
+  }
+
+  const rowCount = Number(rowCountBuf[0]);
+
+  return rowCount;
 }
 
 export function getOdbcError(
