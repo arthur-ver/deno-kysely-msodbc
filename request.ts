@@ -3,8 +3,8 @@ import {
   odbcLib,
   allocHandle,
   execDirect,
-  SQL_HANDLE_STMT,
   rowCount,
+  HandleType,
 } from "./ffi.ts";
 
 export class OdbcRequest<O> {
@@ -36,7 +36,10 @@ export class OdbcRequest<O> {
     rowCount: number | undefined;
     rows: O[];
   }> {
-    this.#stmtHandle = await allocHandle(SQL_HANDLE_STMT, this.#dbcHandle);
+    this.#stmtHandle = await allocHandle(
+      HandleType.SQL_HANDLE_STMT,
+      this.#dbcHandle
+    );
 
     try {
       await execDirect(this.#compiledQuery.sql, this.#stmtHandle);
@@ -90,7 +93,7 @@ export class OdbcRequest<O> {
   async #allocateStmt() {}
 
   async #freeStmt() {
-    await odbcLib.symbols.SQLFreeHandle(SQL_HANDLE_STMT, this.#stmtHandle);
+    await odbcLib.SQLFreeHandle(HandleType.SQL_HANDLE_STMT, this.#stmtHandle);
     this.#stmtHandle = null;
   }
 

@@ -7,7 +7,7 @@ import {
   TransactionSettings,
   MssqlDialectConfig,
 } from "@kysely/kysely";
-import { odbcLib, allocHandle, SQL_HANDLE_ENV } from "./ffi.ts";
+import { HandleType, odbcLib, allocHandle } from "./ffi.ts";
 import { OdbcConnection } from "./connection.ts";
 
 export interface OdbcDialectConfig
@@ -55,7 +55,7 @@ export class OdbcDriver implements Driver {
   }
 
   async init(): Promise<void> {
-    this.#envHandle = await allocHandle(SQL_HANDLE_ENV, null);
+    this.#envHandle = await allocHandle(HandleType.SQL_HANDLE_ENV, null);
   }
 
   async acquireConnection(): Promise<DatabaseConnection> {
@@ -97,7 +97,7 @@ export class OdbcDriver implements Driver {
 
     if (this.#envHandle === null) return;
 
-    await odbcLib.symbols.SQLFreeHandle(SQL_HANDLE_ENV, this.#envHandle);
+    await odbcLib.SQLFreeHandle(HandleType.SQL_HANDLE_ENV, this.#envHandle);
     this.#envHandle = null;
   }
 }

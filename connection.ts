@@ -4,7 +4,7 @@ import {
   QueryResult,
   TransactionSettings,
 } from "@kysely/kysely";
-import { odbcLib, allocHandle, driverConnect, SQL_HANDLE_DBC } from "./ffi.ts";
+import { odbcLib, allocHandle, driverConnect, HandleType } from "./ffi.ts";
 import { OdbcRequest } from "./request.ts";
 
 export class OdbcConnection implements DatabaseConnection {
@@ -20,7 +20,10 @@ export class OdbcConnection implements DatabaseConnection {
   }
 
   async connect(): Promise<this> {
-    this.#dbcHandle = await allocHandle(SQL_HANDLE_DBC, this.#envHandle);
+    this.#dbcHandle = await allocHandle(
+      HandleType.SQL_HANDLE_DBC,
+      this.#envHandle
+    );
     try {
       await driverConnect(this.#connectionString, this.#dbcHandle);
     } catch (error) {
@@ -62,11 +65,11 @@ export class OdbcConnection implements DatabaseConnection {
 
     try {
       // just in case we weren't actually connected
-      await odbcLib.symbols.SQLDisconnect(this.#dbcHandle);
+      await odbcLib.SQLDisconnect(this.#dbcHandle);
     } catch {
       /* ignore */
     }
-    await odbcLib.symbols.SQLFreeHandle(SQL_HANDLE_DBC, this.#dbcHandle);
+    await odbcLib.SQLFreeHandle(HandleType.SQL_HANDLE_DBC, this.#dbcHandle);
     this.#dbcHandle = null;
   }
 
