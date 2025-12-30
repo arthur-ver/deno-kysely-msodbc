@@ -1,36 +1,43 @@
-import {
-  DatabaseIntrospector,
-  Dialect,
-  DialectAdapter,
-  Driver,
-  Kysely,
-  MssqlAdapter,
-  MssqlIntrospector,
-  MssqlQueryCompiler,
-  QueryCompiler,
-} from "@kysely/kysely";
 import { OdbcDialectConfig, OdbcDriver } from "./driver.ts";
 
-export class MssqlOdbcDialect implements Dialect {
+import { MssqlDialect, MssqlDialectConfig, type Driver } from "@kysely/kysely";
+
+/**
+ * MS SQL Server dialect that uses the Microsoft ODBC Driver for SQL Server
+ * library.
+ *
+ * The constructor takes an instance of {@link OdbcDialectConfig}.
+ *
+ * ```ts
+ * const dialect = new MssqlOdbcDialect({
+ *   tarn: {
+ *     options: {
+ *       min: 0,
+ *       max: 10,
+ *     },
+ *   },
+ *   odbc: {
+ *     connectionString: [
+ *       "driver={ODBC Driver 18 for SQL Server}",
+ *       "server=127.0.0.1",
+ *       "uid=sa",
+ *       "pwd=Test1234$",
+ *       "encrypt=yes",
+ *       "trustServerCertificate=yes",
+ *     ].join(";"),
+ *   },
+ * })
+ * ```
+ */
+export class MssqlOdbcDialect extends MssqlDialect {
   readonly #config: OdbcDialectConfig;
 
   constructor(config: OdbcDialectConfig) {
+    super({} as MssqlDialectConfig);
     this.#config = config;
   }
 
-  createDriver(): Driver {
+  override createDriver(): Driver {
     return new OdbcDriver(this.#config);
-  }
-
-  createQueryCompiler(): QueryCompiler {
-    return new MssqlQueryCompiler();
-  }
-
-  createAdapter(): DialectAdapter {
-    return new MssqlAdapter();
-  }
-
-  createIntrospector(db: Kysely<any>): DatabaseIntrospector {
-    return new MssqlIntrospector(db);
   }
 }
