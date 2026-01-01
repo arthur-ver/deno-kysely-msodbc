@@ -44,26 +44,24 @@ switch (Deno.build.os) {
 
 interface OdbcSymbols {
   /**
-   * SQLAllocHandle allocates an environment, connection, statement, or descriptor handle.
-   * 
+   * `SQLAllocHandle` allocates an environment, connection, statement, or descriptor handle.
+   *
    * ```cpp
    * SQLRETURN SQLAllocHandle(
    *       SQLSMALLINT   HandleType,
    *       SQLHANDLE     InputHandle,
    *       SQLHANDLE *   OutputHandlePtr)
    * ```
-   * 
+   *
    * @param handleType The type of handle to be allocated by SQLAllocHandle.
    * @param inputHandle The input handle in whose context the new handle is to be allocated. If HandleType is `SQL_HANDLE_ENV`, this is `SQL_NULL_HANDLE`. If HandleType is `SQL_HANDLE_DBC`, this must be an environment handle, and if it is `SQL_HANDLE_STMT` or `SQL_HANDLE_DESC`, it must be a connection handle.
    * @param outputHandlePtr Pointer to a buffer in which to return the handle to the newly allocated data structure.
    * @returns `SQL_SUCCESS`, `SQL_SUCCESS_WITH_INFO`, `SQL_INVALID_HANDLE`, or `SQL_ERROR`.
-   *
-   
    */
   SQLAllocHandle(
     handleType: HandleType,
     inputHandle: Deno.PointerValue,
-    outputHandlePtr: Deno.PointerValue
+    outputHandlePtr: BufferSource
   ): Promise<
     | SQLRETURN.SQL_SUCCESS
     | SQLRETURN.SQL_SUCCESS_WITH_INFO
@@ -72,20 +70,20 @@ interface OdbcSymbols {
   >;
 
   /**
-   * SQLDriverConnect is an alternative to SQLConnect. It supports data sources that require more connection information than the three arguments in SQLConnect, dialog boxes to prompt the user for all connection information, and data sources that are not defined in the system information. For more information, see Connecting with SQLDriverConnect.
-   * 
+   * `SQLDriverConnectW` is an alternative to SQLConnect. It supports data sources that require more connection information than the three arguments in SQLConnect, dialog boxes to prompt the user for all connection information, and data sources that are not defined in the system information. For more information, see Connecting with SQLDriverConnect.
+   *
    * ```cpp
-   * SQLRETURN SQLDriverConnectW(  
-   *      SQLHDBC         ConnectionHandle,  
-   *      SQLHWND         WindowHandle,  
-   *      SQLWCHAR *      InConnectionString,  
-   *      SQLSMALLINT     StringLength1,  
-   *      SQLWCHAR *      OutConnectionString,  
-   *      SQLSMALLINT     BufferLength,  
-   *      SQLSMALLINT *   StringLength2Ptr,  
+   * SQLRETURN SQLDriverConnectW(
+   *      SQLHDBC         ConnectionHandle,
+   *      SQLHWND         WindowHandle,
+   *      SQLWCHAR *      InConnectionString,
+   *      SQLSMALLINT     StringLength1,
+   *      SQLWCHAR *      OutConnectionString,
+   *      SQLSMALLINT     BufferLength,
+   *      SQLSMALLINT *   StringLength2Ptr,
    *      SQLUSMALLINT    DriverCompletion);
    * ```
-
+   *
    * @param connectionHandle Connection handle.
    * @param windowHandle Window handle. The application can pass the handle of the parent window, if applicable, or a null pointer if either the window handle is not applicable or SQLDriverConnect will not present any dialog boxes.
    * @param inConnectionString A full connection string (see the syntax in "Comments"), a partial connection string, or an empty string.
@@ -101,7 +99,7 @@ interface OdbcSymbols {
     windowHandle: Deno.PointerValue,
     inConnectionString: BufferSource,
     stringLength1: number,
-    outConnectionString: BufferSource | null,
+    outConnectionString: Deno.PointerValue,
     bufferLength: number,
     stringLength2Ptr: Deno.PointerValue,
     driverCompletion: number
@@ -115,19 +113,46 @@ interface OdbcSymbols {
   >;
 
   /**
-   * Returns the current values of multiple fields of a diagnostic record.
-   * This function is synchronous (blocking).
+   * `SQLGetDiagRecW` returns the current values of multiple fields of a diagnostic record that contains error, warning, and status information. Unlike `SQLGetDiagField`, which returns one diagnostic field per call, `SQLGetDiagRec` returns several commonly used fields of a diagnostic record, including the `SQLSTATE`, the native error code, and the diagnostic message text.
+   *
+   * ```cpp
+   * SQLRETURN SQLGetDiagRecW(
+   *      SQLSMALLINT     HandleType,
+   *      SQLHANDLE       Handle,
+   *      SQLSMALLINT     RecNumber,
+   *      SQLWCHAR *      SQLState,
+   *      SQLINTEGER *    NativeErrorPtr,
+   *      SQLWCHAR *      MessageText,
+   *      SQLSMALLINT     BufferLength,
+   *      SQLSMALLINT *   TextLengthPtr);
+   * ```
+   *
+   * @param handleType A handle type identifier that describes the type of handle for which diagnostics are required. Must be one of the following: `SQL_HANDLE_DBC`, `SQL_HANDLE_DESC`, `SQL_HANDLE_ENV`, `SQL_HANDLE_STMT`
+   * @param handle A handle for the diagnostic data structure, of the type indicated by `HandleType`. If `HandleType` is `SQL_HANDLE_ENV`, Handle can be either a shared or an unshared environment handle.
+   * @param recNumber Indicates the status record from which the application seeks information. Status records are numbered from 1.
+   * @param sqlState Pointer to a buffer in which to return a five-character `SQLSTATE` code (and terminating `NULL`) for the diagnostic record `RecNumber`. The first two characters indicate the class; the next three indicate the subclass. This information is contained in the `SQL_DIAG_SQLSTATE` diagnostic field. For more information, see `SQLSTATEs`.
+   * @param nativeErrorPtr Pointer to a buffer in which to return the native error code, specific to the data source. This information is contained in the `SQL_DIAG_NATIVE` diagnostic field.
+   * @param messageText Pointer to a buffer in which to return the diagnostic message text string. This information is contained in the `SQL_DIAG_MESSAGE_TEXT` diagnostic field. For the format of the string, see Diagnostic Messages. If MessageText is `NULL`, `TextLengthPtr` will still return the total number of characters (excluding the null-termination character for character data) available to return in the buffer pointed to by `MessageText`.
+   * @param bufferLength Length of the `*MessageText` buffer in characters. There is no maximum length of the diagnostic message text.
+   * @param textLengthPtr Pointer to a buffer in which to return the total number of characters (excluding the number of characters required for the null-termination character) available to return in `*MessageText`. If the number of characters available to return is greater than `BufferLength`, the diagnostic message text in `*MessageText` is truncated to `BufferLength` minus the length of a null-termination character.
+   * @returns `SQL_SUCCESS`, `SQL_SUCCESS_WITH_INFO`, `SQL_ERROR`, `SQL_NO_DATA`, or `SQL_INVALID_HANDLE`.
    */
   SQLGetDiagRecW(
-    handleType: number,
+    handleType: HandleType,
     handle: Deno.PointerValue,
     recNumber: number,
-    sqlState: Deno.PointerValue,
-    nativeError: Deno.PointerValue,
-    messageText: Deno.PointerValue,
+    sqlState: BufferSource,
+    nativeErrorPtr: BufferSource,
+    messageText: BufferSource,
     bufferLength: number,
-    textLength: Deno.PointerValue
-  ): number;
+    textLengthPtr: BufferSource
+  ): Promise<
+    | SQLRETURN.SQL_SUCCESS
+    | SQLRETURN.SQL_SUCCESS_WITH_INFO
+    | SQLRETURN.SQL_ERROR
+    | SQLRETURN.SQL_NO_DATA
+    | SQLRETURN.SQL_INVALID_HANDLE
+  >;
 
   SQLDisconnect(handle: Deno.PointerValue): Promise<number>;
 
@@ -169,39 +194,40 @@ interface OdbcSymbols {
 const dylib = Deno.dlopen(libPath, {
   SQLAllocHandle: {
     parameters: [
-      "i16", // SQLSMALLINT: signed short int
-      "pointer", // SQLHANDLE: void *
-      "pointer", // SQLHANDLE *: pointer to a void pointer
+      "i16", // SQLSMALLINT <- in
+      "pointer", // SQLHANDLE <- in
+      "buffer", // SQLHANDLE * -> out
     ],
     result: "i16", // SQLRETURN: signed short int
     nonblocking: true,
   },
   SQLDriverConnectW: {
     parameters: [
-      "pointer", // SQLHDBC: void *
-      "pointer", // SQLHWND: void *
-      "buffer", // SQLWCHAR *: pointer to wchar_t
-      "i16", // SQLSMALLINT: signed short int
-      "buffer", // SQLWCHAR *: pointer to wchar_t
-      "i16", // SQLSMALLINT: signed short int
-      "pointer", // SQLSMALLINT *: pointer to signed short int (i16)
-      "u16", // SQLUSMALLINT: unsigned short
+      "pointer", // SQLHDBC <- in
+      "pointer", // SQLHWND <- in
+      "buffer", // SQLWCHAR * <- in
+      "i16", // SQLSMALLINT -> out
+      "pointer", // SQLWCHAR * -> out (always NULL, so using pointer instead of buffer)
+      "i16", // SQLSMALLINT <- in
+      "pointer", // SQLSMALLINT * -> out (always NULL, so using pointer instead of buffer)
+      "u16", // SQLUSMALLINT <- in
     ],
     result: "i16", // SQLRETURN: signed short int
     nonblocking: true,
   },
   SQLGetDiagRecW: {
     parameters: [
-      "i16",
-      "pointer",
-      "i16",
-      "pointer",
-      "pointer",
-      "pointer",
-      "i16",
-      "pointer",
+      "i16", // SQLSMALLINT <- in
+      "pointer", // SQLHANDLE <- in
+      "i16", // SQLSMALLINT <- in
+      "buffer", // SQLWCHAR * -> out
+      "buffer", // SQLINTEGER * -> out
+      "buffer", // SQLWCHAR * -> out
+      "i16", // SQLSMALLINT <- in
+      "buffer", // SQLSMALLINT * -> out
     ],
-    result: "i16",
+    result: "i16", // SQLRETURN: signed short int
+    nonblocking: true,
   },
   SQLDisconnect: { parameters: ["pointer"], result: "i16", nonblocking: true },
   SQLFreeHandle: {
@@ -238,12 +264,12 @@ export async function allocHandle(
   handleType: HandleType,
   parentHandle: Deno.PointerValue
 ): Promise<Deno.PointerValue> {
-  const outHandleBuffer = new BigUint64Array(1);
+  const outHandleBuf = new BigUint64Array(1);
 
   const status = await odbcLib.SQLAllocHandle(
     handleType,
     parentHandle,
-    Deno.UnsafePointer.of(outHandleBuffer)
+    outHandleBuf
   );
 
   if (
@@ -253,7 +279,7 @@ export async function allocHandle(
     throw new Error(`SQLAllocHandle failed (Type: ${handleType})`);
   }
 
-  const handleAddress = outHandleBuffer[0];
+  const handleAddress = outHandleBuf[0];
   if (handleAddress === 0n) {
     throw new Error(
       `SQLAllocHandle returned invalid (null) handle (Type: ${HandleType[handleType]})`
@@ -282,7 +308,10 @@ export async function driverConnect(
     ret !== SQLRETURN.SQL_SUCCESS &&
     ret !== SQLRETURN.SQL_SUCCESS_WITH_INFO
   ) {
-    const errorDetail = getOdbcError(HandleType.SQL_HANDLE_DBC, dbcHandle);
+    const errorDetail = await getOdbcError(
+      HandleType.SQL_HANDLE_DBC,
+      dbcHandle
+    );
     throw new Error(`ODBC Connection Failed:\n${errorDetail}`);
   }
 }
@@ -300,7 +329,7 @@ export async function execDirect(
     ret !== SQLRETURN.SQL_NO_DATA
   ) {
     throw new Error(
-      `Execution Error: ${getOdbcError(
+      `Execution Error: ${await getOdbcError(
         HandleType.SQL_HANDLE_STMT,
         stmtHandle
       )}\nSQL: ${sql}`
@@ -328,10 +357,10 @@ export async function rowCount(handle: Deno.PointerValue): Promise<number> {
   return rowCount;
 }
 
-export function getOdbcError(
-  handleType: number,
+export async function getOdbcError(
+  handleType: HandleType,
   handle: Deno.PointerValue
-): string {
+): Promise<string> {
   const errors: string[] = [];
   let i = 1;
 
@@ -341,15 +370,15 @@ export function getOdbcError(
     const msgBuf = new Uint16Array(512);
     const msgLenBuf = new Int16Array(1);
 
-    const ret = odbcLib.SQLGetDiagRecW(
+    const ret = await odbcLib.SQLGetDiagRecW(
       handleType,
       handle,
       i,
-      Deno.UnsafePointer.of(stateBuf),
-      Deno.UnsafePointer.of(nativeErrBuf),
-      Deno.UnsafePointer.of(msgBuf),
+      stateBuf,
+      nativeErrBuf,
+      msgBuf,
       msgBuf.length,
-      Deno.UnsafePointer.of(msgLenBuf)
+      msgLenBuf
     );
 
     if (ret === SQLRETURN.SQL_NO_DATA) break;
