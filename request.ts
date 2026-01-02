@@ -2,34 +2,27 @@ import { CompiledQuery, QueryResult } from "@kysely/kysely";
 import {
   allocHandle,
   execDirect,
+  getOdbcParameter,
   HandleType,
   odbcLib,
   rowCount,
+  SQL_NULL_DATA,
+  SQL_PARAM_INPUT,
 } from "./ffi.ts";
 
 export class OdbcRequest<O> {
   readonly #compiledQuery: CompiledQuery;
   readonly #dbcHandle: Deno.PointerValue;
-  readonly #rows: O[];
-  readonly #streamChunkSize: number | undefined;
-  readonly #subscribers: Record<
-    string,
-    (event: "completed" | "chunkReady" | "error", error?: unknown) => void
-  >;
-  #rowCount: number | undefined;
 
   #stmtHandle: Deno.PointerValue = null;
+  #preventGC: unknown[] = []; // keep buffers from being garbage collected
 
   constructor(
     compiledQuery: CompiledQuery,
     dbcHandle: Deno.PointerValue,
-    streamChunkSize?: number,
   ) {
     this.#compiledQuery = compiledQuery;
     this.#dbcHandle = dbcHandle;
-    this.#rows = [];
-    this.#streamChunkSize = streamChunkSize;
-    this.#subscribers = {};
   }
 
   async execute(): Promise<{
@@ -41,10 +34,15 @@ export class OdbcRequest<O> {
       this.#dbcHandle,
     );
 
+    let i = 1;
+    for (const param of this.#compiledQuery.parameters) {
+      await this.#bindParam(param, i);
+      i++;
+    }
+
     try {
       await execDirect(this.#compiledQuery.sql, this.#stmtHandle);
       const numAffectedRows = await rowCount(this.#stmtHandle);
-      console.log(numAffectedRows);
       const rows: O[] = [];
 
       /*const numAffectedRows = this.#getRowCount();
@@ -90,24 +88,57 @@ export class OdbcRequest<O> {
     }*/
   }
 
-  async #allocateStmt() {}
-
   async #freeStmt() {
     await odbcLib.SQLFreeHandle(HandleType.SQL_HANDLE_STMT, this.#stmtHandle);
     this.#stmtHandle = null;
   }
 
-  #formatValue(value: unknown) {}
+  async #bindParam(value: unknown, i: number): Promise<void> {
+    if (value === null || typeof value === "undefined" || value === undefined) {
+      const nullBuf = new Uint8Array();
+      const lenInd = new BigInt64Array([BigInt(SQL_NULL_DATA)]);
 
-  #fetchOne() {}
+      await odbcLib.SQLBindParameter(
+        this.#stmtHandle,
+        i,
+        SQL_PARAM_INPUT,
+        1, // dummy
+        1, // dummy
+        0n,
+        0,
+        nullBuf,
+        0n,
+        lenInd,
+      );
 
-  #getRowCount() {}
+      this.#preventGC.push(nullBuf);
+      this.#preventGC.push(lenInd);
 
-  #getNumResultCols() {}
+      return;
+    }
 
-  #describeColumns(colCount: number) {}
+    const param = getOdbcParameter(value);
 
-  #fetch() {}
+    const bufLen = BigInt(param.buf.byteLength);
+    const lenInd = new BigInt64Array([bufLen]);
 
-  #readRow(colNames: string[]) {}
+    const columnSize = 0n; // TODO
+    const decimalDigits = 0; // TODO
+
+    await odbcLib.SQLBindParameter(
+      this.#stmtHandle,
+      i,
+      SQL_PARAM_INPUT,
+      param.cType,
+      param.sqlType,
+      columnSize,
+      decimalDigits,
+      param.buf,
+      bufLen,
+      lenInd,
+    );
+
+    this.#preventGC.push(param.buf);
+    this.#preventGC.push(lenInd);
+  }
 }

@@ -15,16 +15,31 @@ export enum SQLRETURN {
   SQL_PARAM_DATA_AVAILABLE = 101,
 }
 
+export enum ValueType {
+  SQL_C_SLONG = -16,
+  SQL_C_SBIGINT = -25,
+  SQL_C_DOUBLE = 8,
+  SQL_C_BIT = -7,
+  SQL_C_TYPE_TIMESTAMP = 11,
+  SQL_C_BINARY = -2,
+  SQL_C_WCHAR = -8,
+}
+
+export enum ParameterType {
+  SQL_INTEGER = 4,
+  SQL_BIGINT = -5,
+  SQL_FLOAT = 6,
+  SQL_BIT = ValueType.SQL_C_BIT,
+  SQL_TYPE_TIMESTAMP = 93,
+  SQL_VARBINARY = -3,
+  SQL_WVARCHAR = -9,
+}
+
+export const SQL_PARAM_INPUT = 1;
+export const SQL_NULL_DATA = -1;
+
 export const SQL_DRIVER_NOPROMPT = 0;
 export const SQL_NTS = -3;
-
-export const SQL_C_CHAR = 1;
-export const SQL_C_LONG = 4;
-export const SQL_C_DOUBLE = 8;
-export const SQL_C_WCHAR = -8;
-
-export const SQL_INTEGER = 4;
-export const SQL_WVARCHAR = -9;
 
 let libPath: string;
 
@@ -241,6 +256,53 @@ interface OdbcSymbols {
     | SQLRETURN.SQL_ERROR
     | SQLRETURN.SQL_INVALID_HANDLE
   >;
+
+  /**
+   * `SQLBindParameter` binds a buffer to a parameter marker in a SQL statement. `SQLBindParameter` supports binding to a Unicode C data type, even if the underlying driver does not support Unicode data.
+   *
+   * ```cpp
+   * SQLRETURN SQLBindParameter(
+   *       SQLHSTMT        StatementHandle,
+   *       SQLUSMALLINT    ParameterNumber,
+   *       SQLSMALLINT     InputOutputType,
+   *       SQLSMALLINT     ValueType,
+   *       SQLSMALLINT     ParameterType,
+   *       SQLULEN         ColumnSize,
+   *       SQLSMALLINT     DecimalDigits,
+   *       SQLPOINTER      ParameterValuePtr,
+   *       SQLLEN          BufferLength,
+   *       SQLLEN *        StrLen_or_IndPtr);
+   * ```
+   *
+   * @param statementHandle Statement handle.
+   * @param parameterNumber Parameter number, ordered sequentially in increasing parameter order, starting at 1.
+   * @param inputOutputType The type of the parameter. For more information, see "InputOutputType Argument" in "Comments."
+   * @param valueType The C data type of the parameter. For more information, see "ValueType Argument" in "Comments."
+   * @param parameterType The SQL data type of the parameter. For more information, see "ParameterType Argument" in "Comments."
+   * @param columnSize The size of the column or expression of the corresponding parameter marker. For more information, see "ColumnSize Argument" in "Comments."
+   * @param decimalDigits The decimal digits of the column or expression of the corresponding parameter marker. For more information about column size, see Column Size, Decimal Digits, Transfer Octet Length, and Display Size.
+   * @param parameterValuePtr A pointer to a buffer for the parameter's data. For more information, see "ParameterValuePtr Argument" in "Comments."
+   * @param bufferLength Length of the ParameterValuePtr buffer in bytes. For more information, see "BufferLength Argument" in "Comments."
+   * @param StrLen_or_IndPtr A pointer to a buffer for the parameter's length. For more information, see "StrLen_or_IndPtr Argument" in "Comments."
+   * @returns `SQL_SUCCESS`, `SQL_SUCCESS_WITH_INFO`, `SQL_ERROR`, or `SQL_INVALID_HANDLE`.
+   */
+  SQLBindParameter(
+    statementHandle: Deno.PointerValue,
+    parameterNumber: number,
+    inputOutputType: number,
+    valueType: number,
+    parameterType: number,
+    columnSize: bigint,
+    decimalDigits: number,
+    parameterValuePtr: BufferSource,
+    bufferLength: bigint,
+    StrLen_or_IndPtr: BufferSource,
+  ): Promise<
+    | SQLRETURN.SQL_SUCCESS
+    | SQLRETURN.SQL_SUCCESS_WITH_INFO
+    | SQLRETURN.SQL_ERROR
+    | SQLRETURN.SQL_INVALID_HANDLE
+  >;
 }
 
 const dylib = Deno.dlopen(libPath, {
@@ -311,6 +373,22 @@ const dylib = Deno.dlopen(libPath, {
       "buffer", // SQLLEN * -> out
     ],
     result: "i16", // SQLRETURN
+    nonblocking: true,
+  },
+  SQLBindParameter: {
+    parameters: [
+      "pointer", // SQLHSTMT <- in
+      "u16", // SQLUSMALLINT <- in
+      "i16", // SQLSMALLINT <- in
+      "i16", // SQLSMALLINT <- in
+      "i16", // SQLSMALLINT <- in
+      "u64", // SQLULEN <- in
+      "i16", // SQLSMALLINT <- in
+      "buffer", // SQLPOINTER <- in
+      "i64", // SQLLEN <- in
+      "buffer", // SQLLEN * <- in
+    ],
+    result: "i16",
     nonblocking: true,
   },
 });
@@ -516,4 +594,74 @@ export function strToUtf16(str: string): Uint8Array<ArrayBuffer> {
     buf[i] = str.charCodeAt(i); // JS strings are already stored as UTF-16 sequences internally.
   }
   return new Uint8Array(buf.buffer); // Return the byte view (required for Deno FFI)
+}
+
+export function getOdbcParameter(value: unknown): {
+  cType: ValueType;
+  sqlType: ParameterType;
+  buf: Uint8Array<ArrayBuffer> | Float64Array<ArrayBuffer>;
+} {
+  // Integers (Number or BigInt)
+  if (
+    typeof value === "bigint" || (typeof value === "number" && value % 1 === 0)
+  ) {
+    // 32-bit Integer
+    if (value >= -2147483648 && value <= 2147483647) {
+      return {
+        cType: ValueType.SQL_C_SLONG,
+        sqlType: ParameterType.SQL_INTEGER, // #tedious.TYPES.Int
+        buf: new Float64Array([value as any]),
+      };
+    } else {
+      // 64-bit Integer
+      return {
+        cType: ValueType.SQL_C_SBIGINT,
+        sqlType: ParameterType.SQL_BIGINT, // #tedious.TYPES.BigInt
+        buf: new Float64Array([value as any]),
+      };
+    }
+  }
+
+  // Floats (Double Precision)
+  if (typeof value === "number") {
+    return {
+      cType: ValueType.SQL_C_DOUBLE,
+      sqlType: ParameterType.SQL_FLOAT, // #tedious.TYPES.Float
+      buf: new Float64Array([value]),
+    };
+  }
+
+  // Booleans
+  if (typeof value === "boolean") {
+    return {
+      cType: ValueType.SQL_C_BIT,
+      sqlType: ParameterType.SQL_BIT, // #tedious.TYPES.Bit
+      buf: new Uint8Array([value ? 1 : 0]),
+    };
+  }
+
+  // 4. Handle Dates
+  /*if (value instanceof Date) {
+    // Note: C Type is struct_tm or TIMESTAMP_STRUCT
+    return {
+      cType: ValueType.SQL_C_TYPE_TIMESTAMP,
+      sqlType: ParameterType.SQL_TYPE_TIMESTAMP,
+    };
+  }*/
+
+  // 5. Handle Binary Buffers
+  /*if (typeof Buffer !== "undefined" && Buffer.isBuffer(value)) {
+    return {
+      fCType: ValueType.SQL_C_BINARY,
+      fSqlType: ParameterType.SQL_VARBINARY, // #tedious.TYPES.VarBinary
+    };
+  }*/
+
+  // Strings (Unicode)
+  // Maps to SQL Server NVARCHAR
+  return {
+    cType: ValueType.SQL_C_WCHAR,
+    sqlType: ParameterType.SQL_WVARCHAR, // #tedious.TYPES.NVarChar
+    buf: strToUtf16(value as string),
+  };
 }
