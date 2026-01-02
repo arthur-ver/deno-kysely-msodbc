@@ -1,6 +1,12 @@
 import { OdbcDialectConfig, OdbcDriver } from "./driver.ts";
 
-import { type Driver, MssqlDialect, MssqlDialectConfig } from "@kysely/kysely";
+import {
+  type Driver,
+  MssqlDialect,
+  MssqlDialectConfig,
+  MssqlQueryCompiler,
+  QueryCompiler,
+} from "@kysely/kysely";
 
 /**
  * MS SQL Server dialect that uses the Microsoft ODBC Driver for SQL Server
@@ -39,5 +45,16 @@ export class MssqlOdbcDialect extends MssqlDialect {
 
   override createDriver(): Driver {
     return new OdbcDriver(this.#config);
+  }
+
+  override createQueryCompiler(): QueryCompiler {
+    return new OdbcMssqlQueryCompiler();
+  }
+}
+
+class OdbcMssqlQueryCompiler extends MssqlQueryCompiler {
+  protected override getCurrentParameterPlaceholder(): string {
+    // ODBC uses '?' for all parameters, regardless of index.
+    return "?";
   }
 }
