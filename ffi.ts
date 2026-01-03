@@ -305,6 +305,75 @@ interface OdbcSymbols {
     | SQLRETURN.SQL_ERROR
     | SQLRETURN.SQL_INVALID_HANDLE
   >;
+
+  /**
+   * `SQLNumResultCols` returns the number of columns in a result set.
+   *
+   * ```cpp
+   * SQLRETURN SQLNumResultCols(
+   *      SQLHSTMT        StatementHandle,
+   *      SQLSMALLINT *   ColumnCountPtr);
+   * ```
+   *
+   * @param statementHandle Statement handle.
+   * @param columnCountPtr Pointer to a buffer in which to return the number of columns in the result set. This count does not include a bound bookmark column.
+   * @returns `SQL_SUCCESS`, `SQL_SUCCESS_WITH_INFO`, `SQL_STILL_EXECUTING`, `SQL_ERROR`, or `SQL_INVALID_HANDLE`.
+   */
+  SQLNumResultCols(
+    statementHandle: Deno.PointerValue,
+    columnCountPtr: BufferSource,
+  ): Promise<
+    | SQLRETURN.SQL_SUCCESS
+    | SQLRETURN.SQL_SUCCESS_WITH_INFO
+    | SQLRETURN.SQL_STILL_EXECUTING
+    | SQLRETURN.SQL_ERROR
+    | SQLRETURN.SQL_INVALID_HANDLE
+  >;
+
+  /**
+   * `SQLDescribeColW` returns the result descriptor - column name,type, column size, decimal digits, and nullability - for one column in the result set. This information also is available in the fields of the IRD.
+   *
+   * ```cpp
+   * SQLRETURN SQLDescribeColW(
+   *       SQLHSTMT       StatementHandle,
+   *       SQLUSMALLINT   ColumnNumber,
+   *       SQLWCHAR *     ColumnName,
+   *       SQLSMALLINT    BufferLength,
+   *       SQLSMALLINT *  NameLengthPtr,
+   *       SQLSMALLINT *  DataTypePtr,
+   *       SQLULEN *      ColumnSizePtr,
+   *       SQLSMALLINT *  DecimalDigitsPtr,
+   *       SQLSMALLINT *  NullablePtr);
+   * ```
+   *
+   * @param statementHandle Statement handle.
+   * @param columnNumber Column number of result data, ordered sequentially in increasing column order, starting at 1. The ColumnNumber argument can also be set to 0 to describe the bookmark column.
+   * @param columnName Pointer to a null-terminated buffer in which to return the column name. This value is read from the SQL_DESC_NAME field of the IRD. If the column is unnamed or the column name cannot be determined, the driver returns an empty string. If ColumnName is NULL, NameLengthPtr will still return the total number of characters (excluding the null-termination character for character data) available to return in the buffer pointed to by ColumnName.
+   * @param bufferLength Length of the *ColumnName buffer, in characters.
+   * @param nameLengthPtr Pointer to a buffer in which to return the total number of characters (excluding the null termination) available to return in *ColumnName. If the number of characters available to return is greater than or equal to BufferLength, the column name in *ColumnName is truncated to BufferLength minus the length of a null-termination character.
+   * @param dataTypePtr Pointer to a buffer in which to return the SQL data type of the column. This value is read from the SQL_DESC_CONCISE_TYPE field of the IRD. This will be one of the values in SQL Data Types, or a driver-specific SQL data type. If the data type cannot be determined, the driver returns SQL_UNKNOWN_TYPE. In ODBC 3.x, SQL_TYPE_DATE, SQL_TYPE_TIME, or SQL_TYPE_TIMESTAMP is returned in *DataTypePtr for date, time, or timestamp data, respectively; in ODBC 2.x, SQL_DATE, SQL_TIME, or SQL_TIMESTAMP is returned. The Driver Manager performs the required mappings when an ODBC 2.x application is working with an ODBC 3.x driver or when an ODBC 3.x application is working with an ODBC 2.x driver. When ColumnNumber is equal to 0 (for a bookmark column), SQL_BINARY is returned in *DataTypePtr for variable-length bookmarks. (SQL_INTEGER is returned if bookmarks are used by an ODBC 3.x application working with an ODBC 2.x driver or by an ODBC 2.x application working with an ODBC 3.x driver.)
+   * @param columnSizePtr Pointer to a buffer in which to return the size (in characters) of the column on the data source. If the column size cannot be determined, the driver returns 0. For more information on column size, see Column Size, Decimal Digits, Transfer Octet Length, and Display Size in Appendix D: Data Types.
+   * @param decimalDigitsPtr Pointer to a buffer in which to return the number of decimal digits of the column on the data source. If the number of decimal digits cannot be determined or is not applicable, the driver returns 0. For more information on decimal digits, see Column Size, Decimal Digits, Transfer Octet Length, and Display Size in Appendix D: Data Types.
+   * @param nullablePtr Pointer to a buffer in which to return a value that indicates whether the column allows NULL values. This value is read from the SQL_DESC_NULLABLE field of the IRD. The value is one of the following: SQL_NO_NULLS, SQL_NULLABLE, SQL_NULLABLE_UNKNOWN
+   * @returns `SQL_SUCCESS`, `SQL_SUCCESS_WITH_INFO`, `SQL_STILL_EXECUTING`, `SQL_ERROR`, or `SQL_INVALID_HANDLE`.
+   */
+  SQLDescribeColW(
+    statementHandle: Deno.PointerValue,
+    columnNumber: number,
+    columnName: BufferSource,
+    bufferLength: number,
+    nameLengthPtr: BufferSource,
+    dataTypePtr: BufferSource,
+    columnSizePtr: BufferSource,
+    decimalDigitsPtr: BufferSource,
+    nullablePtr: BufferSource,
+  ): Promise<
+    | SQLRETURN.SQL_SUCCESS
+    | SQLRETURN.SQL_SUCCESS_WITH_INFO
+    | SQLRETURN.SQL_STILL_EXECUTING
+    | SQLRETURN.SQL_ERROR
+    | SQLRETURN.SQL_INVALID_HANDLE
+  >;
 }
 
 const dylib = Deno.dlopen(libPath, {
@@ -390,12 +459,37 @@ const dylib = Deno.dlopen(libPath, {
       "i64", // SQLLEN <- in
       "buffer", // SQLLEN * <- in
     ],
-    result: "i16",
+    result: "i16", // SQLRETURN
+    nonblocking: true,
+  },
+  SQLNumResultCols: {
+    parameters: [
+      "pointer", // SQLHSTMT <- in
+      "buffer", // SQLSMALLINT * -> out
+    ],
+    result: "i16", // SQLRETURN
+    nonblocking: true,
+  },
+  SQLDescribeColW: {
+    parameters: [
+      "pointer", // SQLHSTMT <- in
+      "u16", // SQLUSMALLINT <- in
+      "buffer", // SQLCHAR * -> out
+      "i16", // SQLSMALLINT <- in
+      "buffer", // SQLSMALLINT * -> out
+      "buffer", // SQLSMALLINT * -> out
+      "buffer", // SQLULEN * -> out
+      "buffer", // SQLSMALLINT * -> out
+      "buffer", // SQLSMALLINT * -> out
+    ],
+    result: "i16", // SQLRETURN
     nonblocking: true,
   },
 });
 
 export const odbcLib = dylib.symbols as OdbcSymbols;
+
+const decoder = new TextDecoder("utf-16le");
 
 /**
  * Allocates a new ODBC handle of the specified type.
@@ -457,7 +551,7 @@ export async function driverConnect(
   connStr: string,
   dbcHandle: Deno.PointerValue,
 ): Promise<void> {
-  const connStrEncoded = strToUtf16(connStr);
+  const connStrEncoded = strToBuf(connStr);
 
   const ret = await odbcLib.SQLDriverConnectW(
     dbcHandle,
@@ -496,7 +590,7 @@ export async function execDirect(
   rawSql: string,
   stmtHandle: Deno.PointerValue,
 ): Promise<void> {
-  const rawSqlEncoded = strToUtf16(rawSql);
+  const rawSqlEncoded = strToBuf(rawSql);
   const ret = await odbcLib.SQLExecDirectW(stmtHandle, rawSqlEncoded, SQL_NTS);
 
   if (
@@ -573,9 +667,8 @@ export async function getOdbcError(
 
     if (status === SQLRETURN.SQL_NO_DATA) break;
 
-    const decoder = new TextDecoder("utf-16le");
-    const state = decoder.decode(stateBuf).slice(0, 5);
-    const msg = decoder.decode(msgBuf.subarray(0, msgLenBuf[0]));
+    const state = bufToStr(stateBuf, 5);
+    const msg = bufToStr(msgBuf, msgLenBuf[0]);
 
     errors.push(`[${state}] ${msg} (Code: ${nativeErrBuf[0]})`);
     i++;
@@ -637,15 +730,102 @@ export async function bindParameter(
 }
 
 /**
- * Converts a standard JavaScript string into a raw block of memory that a C program can read.
+ * Wrapper for `SQLNumResultCols` that returns the number of columns in the result set for a prepared or executed statement.
  *
- * @param str Input string to a C function.
+ * @param stmtHandle The handle to the statement.
+ * @returns A promise that resolves to the number of columns in the result set.
+ * @throws If the ODBC function call fails
  */
-export function strToUtf16(str: string): Uint8Array<ArrayBuffer> {
+export async function numResultCols(
+  stmtHandle: Deno.PointerValue,
+): Promise<number> {
+  const colCountBuf = new Int16Array(1);
+
+  const status = await odbcLib.SQLNumResultCols(
+    stmtHandle,
+    colCountBuf,
+  );
+
+  if (
+    status !== SQLRETURN.SQL_SUCCESS &&
+    status !== SQLRETURN.SQL_SUCCESS_WITH_INFO
+  ) {
+    throw new Error(`SQLNumResultCols failed: ${SQLRETURN[status]}`);
+  }
+
+  return colCountBuf[0];
+}
+
+export async function describeCol(
+  stmtHandle: Deno.PointerValue,
+  colNumber: number,
+) {
+  const CHAR_LIMIT = 256;
+
+  const nameBuf = new Uint16Array(CHAR_LIMIT);
+  const nameLenIndBuf = new Int16Array(1);
+  const dataTypeBuf = new Int16Array(1);
+  const colSizeBuf = new BigUint64Array(1);
+  const decimalDigitsBuf = new Int16Array(1);
+  const nullableBuf = new Int16Array(1);
+
+  const status = await odbcLib.SQLDescribeColW(
+    stmtHandle,
+    colNumber,
+    nameBuf,
+    CHAR_LIMIT,
+    nameLenIndBuf,
+    dataTypeBuf,
+    colSizeBuf,
+    decimalDigitsBuf,
+    nullableBuf,
+  );
+
+  if (
+    status !== SQLRETURN.SQL_SUCCESS &&
+    status !== SQLRETURN.SQL_SUCCESS_WITH_INFO
+  ) {
+    throw new Error(
+      `SQLDescribeColW failed: ${await getOdbcError(
+        HandleType.SQL_HANDLE_STMT,
+        stmtHandle,
+      )}\n`,
+    );
+  }
+
+  const name = bufToStr(nameBuf, nameLenIndBuf[0]);
+
+  return {
+    name,
+    type: dataTypeBuf[0],
+    size: colSizeBuf[0],
+    scale: decimalDigitsBuf[0],
+    nullableBuf: nullableBuf[0] === 1,
+  };
+}
+
+/**
+ * Encodes a JavaScript string into a Null-Terminated UTF-16LE buffer.
+ *
+ * @param str The JavaScript string to encode.
+ * @returns A `Uint8Array` view of the underlying UTF-16 buffer. Note: Deno FFI requires `Uint8Array` for "buffer" parameters, even if the underlying data is 16-bit aligned.
+ */
+export function strToBuf(str: string): Uint8Array<ArrayBuffer> {
   // Create a 16-bit array (native C "unsigned short" array). +1 for the null terminator \0
   const buf = new Uint16Array(str.length + 1);
   for (let i = 0; i < str.length; i++) {
     buf[i] = str.charCodeAt(i); // JS strings are already stored as UTF-16 sequences internally.
   }
-  return new Uint8Array(buf.buffer); // Return the byte view (required for Deno FFI)
+  return new Uint8Array(buf.buffer);
+}
+
+/**
+ * Decodes a UTF-16LE "Wide" string buffer from ODBC into a JavaScript string.
+ *
+ * @param buffer The raw buffer containing the Wide characters.
+ * @param len The number of haracters to decode.
+ * @returns The decoded JavaScript string.
+ */
+export function bufToStr(buffer: Uint16Array, len: number): string {
+  return decoder.decode(buffer.subarray(0, len));
 }

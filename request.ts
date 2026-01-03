@@ -2,13 +2,14 @@ import { CompiledQuery, QueryResult } from "@kysely/kysely";
 import {
   allocHandle,
   bindParameter,
+  describeCol,
   execDirect,
   HandleType,
+  numResultCols,
   odbcLib,
   ParameterType,
-  rowCount,
   SQL_NULL_DATA,
-  strToUtf16,
+  strToBuf,
   ValueType,
 } from "./ffi.ts";
 
@@ -39,23 +40,37 @@ export class OdbcRequest<O> {
     try {
       await this.#bindParams(this.#compiledQuery.parameters);
       await execDirect(this.#compiledQuery.sql, this.#stmtHandle);
-      const numAffectedRows = await rowCount(this.#stmtHandle);
-      const rows: O[] = [];
+      const colCount = await numResultCols(this.#stmtHandle);
 
-      /*const numAffectedRows = this.#getRowCount();
-      const colCount = this.#getNumResultCols();
-      const rows: O[] = [];
-      if (colCount > 0) {
-        const colNames = this.#describeColumns(colCount);
-        while (this.#fetch()) {
-          rows.push(this.#readRow(colNames));
-        }
+      //const bindings: ColumnBind[] = [];
+      for (let i = 1; i <= colCount; i++) {
+        const desc = await describeCol(this.#stmtHandle, i);
+        console.log(desc);
+
+        // Determine buffer size (e.g., +1 for null terminator if string)
+        // Note: For VARCHAR(MAX), you might still need chunks, but for
+        // standard fields, allocate the full size.
+        //const bufSize = Math.max(desc.size, 256);
+
+        // Create the buffer (Native memory ownership stays with JS, but ODBC writes to it)
+        //const buffer = new Uint8Array(bufSize);
+        //const lenInd = new BigInt64Array(1); // SQLLEN pointer
+
+        // BIND IT: Tell ODBC "Put column #i data here"
+        /*const ret = lib.symbols.SQLBindCol(
+          this.#stmtHandle,
+          i,
+          SQL_C_CHAR, // Request everything as string for simplicity (or map types)
+          buffer,
+          bufSize,
+          lenInd,
+        );
+
+        if (ret !== SQL_SUCCESS) throw new Error("Bind failed");
+
+        bindings.push({ name: desc.name, type: desc.type, buffer, lenInd });*/
       }
 
-      return {
-        rows,
-        numAffectedRows: numAffectedRows > 0n ? numAffectedRows : undefined,
-      };*/
       return {} as any;
     } finally {
       await this.#cleanup();
@@ -229,7 +244,7 @@ export class OdbcRequest<O> {
       return {
         cType: ValueType.SQL_C_WCHAR,
         sqlType: ParameterType.SQL_WVARCHAR,
-        buf: strToUtf16(val),
+        buf: strToBuf(val),
         columnSize: BigInt(val.length), // charLength
         decimalDigits: 0, // ignored by SQLBindParameter for this data type
       };
