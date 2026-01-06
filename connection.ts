@@ -9,18 +9,17 @@ import { OdbcRequest } from "./request.ts";
 
 export class OdbcConnection implements DatabaseConnection {
   readonly #connectionString: string;
-  #hasSocketError: boolean;
   #envHandle: Deno.PointerValue;
   #dbcHandle: Deno.PointerValue = null;
+  #hasSocketError: boolean = false;
 
   constructor(connectionString: string, envHandle: Deno.PointerValue) {
     this.#connectionString = connectionString;
-    this.#hasSocketError = false;
     this.#envHandle = envHandle;
   }
 
   async connect(): Promise<this> {
-    this.#dbcHandle = await allocHandle(
+    this.#dbcHandle = allocHandle(
       HandleType.SQL_HANDLE_DBC,
       this.#envHandle,
     );
@@ -33,8 +32,8 @@ export class OdbcConnection implements DatabaseConnection {
     return this;
   }
 
-  async executeQuery<O>(compiledQuery: CompiledQuery): Promise<QueryResult<O>> {
-    const request = new OdbcRequest<O>(compiledQuery, this.#dbcHandle);
+  async executeQuery<R>(compiledQuery: CompiledQuery): Promise<QueryResult<R>> {
+    const request = new OdbcRequest<R>(compiledQuery, this.#dbcHandle);
     const { rowCount, rows } = await request.execute();
 
     return {
@@ -43,14 +42,14 @@ export class OdbcConnection implements DatabaseConnection {
     };
   }
 
-  async *streamQuery<O>(
+  async *streamQuery<R>(
     compiledQuery: CompiledQuery,
     chunkSize: number,
-  ): AsyncIterableIterator<QueryResult<O>> {
+  ): AsyncIterableIterator<QueryResult<R>> {
     if (!this.#dbcHandle) {
       throw new Error("Connection is closed");
     }
-    const request = new OdbcRequest<O>(compiledQuery, this.#dbcHandle);
+    const request = new OdbcRequest<R>(compiledQuery, this.#dbcHandle);
     yield* request.stream(chunkSize);
   }
 
@@ -69,7 +68,7 @@ export class OdbcConnection implements DatabaseConnection {
     } catch {
       /* ignore */
     }
-    await odbcLib.SQLFreeHandle(HandleType.SQL_HANDLE_DBC, this.#dbcHandle);
+    odbcLib.SQLFreeHandle(HandleType.SQL_HANDLE_DBC, this.#dbcHandle);
     this.#dbcHandle = null;
   }
 

@@ -9,7 +9,6 @@ import {
   fetch,
   getOdbcError,
   HandleType,
-  numResultCols,
   odbcLib,
   ParameterType,
   SQL_NTS,
@@ -33,13 +32,29 @@ type ColBinding = {
   lenIndBuf: BigInt64Array<ArrayBuffer>;
 };
 
-export class OdbcRequest<O> {
+type ParamBinding = {
+  cType: ValueType;
+  sqlType: ParameterType;
+  buf:
+    | Int32Array<ArrayBuffer>
+    | BigInt64Array<ArrayBuffer>
+    | Uint8Array<ArrayBuffer>
+    | Float64Array<ArrayBuffer>;
+  columnSize: bigint;
+  decimalDigits: number;
+  bufLen: bigint;
+  lenIndBuf: BigInt64Array<ArrayBuffer>;
+};
+
+export class OdbcRequest<R> {
   readonly #compiledQuery: CompiledQuery;
   readonly #dbcHandle: Deno.PointerValue;
+  readonly #rows: R[] = [];
+
+  readonly #paramBindings: Map<number, ParamBinding> = new Map();
+  readonly #colBindings: Map<string, ColBinding> = new Map();
 
   #stmtHandle: Deno.PointerValue = null;
-  #rows: O[] = [];
-  #preventGC: unknown[] = []; // keep buffers from being garbage collected
 
   constructor(
     compiledQuery: CompiledQuery,
@@ -51,77 +66,34 @@ export class OdbcRequest<O> {
 
   async execute(): Promise<{
     rowCount: number | undefined;
-    rows: O[];
+    rows: R[];
   }> {
-    this.#stmtHandle = await allocHandle(
+    this.#stmtHandle = allocHandle(
       HandleType.SQL_HANDLE_STMT,
       this.#dbcHandle,
     );
 
     try {
-      await this.#bindParams(this.#compiledQuery.parameters);
-      await execDirect(this.#compiledQuery.sql, this.#stmtHandle);
-      const colCount = await numResultCols(this.#stmtHandle);
+      this.#bindParams();
 
-      const bindings: ColBinding[] = [];
-      for (let i = 1; i <= colCount; i++) {
-        const desc = await describeCol(this.#stmtHandle, i);
+      const colCount = await execDirect(
+        this.#compiledQuery.sql,
+        this.#stmtHandle,
+      );
+      this.#bindCols(colCount);
 
-        if (desc.columnSize === 0n || desc.columnSize > MAX_BIND_SIZE) {
-          throw new Error(`Unable to bind column ${desc}!`);
-        }
-
-        const binding = this.#getOutputBuffer(desc.dataType, desc.columnSize);
-
-        await bindCol(
-          this.#stmtHandle,
-          i,
-          binding.cType,
-          binding.buf,
-          binding.bufLen,
-          binding.lenIndBuf,
-        );
-
-        bindings.push(binding);
-      }
-
-      while (true) {
-        const status = await fetch(this.#stmtHandle);
-
-        if (status === SQLRETURN.SQL_SUCCESS) {
-          this.#rows.push(this.#readRow(bindings) as any);
-          continue;
-        }
-
-        if (status === SQLRETURN.SQL_SUCCESS_WITH_INFO) {
-          // Optional: read the diagnostic record here
-          continue;
-        }
-
-        if (status === SQLRETURN.SQL_NO_DATA) {
-          break;
-        }
-
-        if (status === SQLRETURN.SQL_ERROR) {
-          throw new Error(`SQLFetch failed: ${await getOdbcError(
-            HandleType.SQL_HANDLE_STMT,
-            this.#stmtHandle,
-          )}`);
-        }
-
-        throw new Error(`SQLFetch returned unexpected status: ${status}`);
-      }
+      await this.#fetchResultSet();
 
       return {
-        rows: this.#rows as any,
+        rows: this.#rows,
         rowCount: this.#rows.length,
       };
     } finally {
-      await this.#cleanup();
+      this.#cleanup();
     }
   }
 
-  async *stream(chunkSize: number): AsyncIterableIterator<QueryResult<O>> {
+  async *stream(chunkSize: number): AsyncIterableIterator<QueryResult<R>> {
     /*await this.#allocateStmt();
     try {
       this.#execDirect();
@@ -144,37 +116,53 @@ export class OdbcRequest<O> {
     }*/
   }
 
-  async #cleanup(): Promise<void> {
-    await this.#freeStmt();
-    this.#preventGC = [];
-  }
-
-  async #freeStmt(): Promise<void> {
-    await odbcLib.SQLFreeHandle(HandleType.SQL_HANDLE_STMT, this.#stmtHandle);
+  #cleanup(): void {
+    odbcLib.SQLFreeHandle(HandleType.SQL_HANDLE_STMT, this.#stmtHandle);
     this.#stmtHandle = null;
+    this.#paramBindings.clear();
+    this.#colBindings.clear();
   }
 
-  async #bindParams(params: CompiledQuery["parameters"]): Promise<void> {
+  #bindParams(): void {
     let i = 1;
-    for (const val of params) {
-      const param = this.#getOdbcParameter(val);
+    for (const val of this.#compiledQuery.parameters) {
+      const odbcParam = this.#getParamBinding(val);
 
-      await bindParameter(
+      bindParameter(
         this.#stmtHandle,
         i,
-        param.cType,
-        param.sqlType,
-        param.columnSize,
-        param.decimalDigits,
-        param.buf,
-        param.bufLen,
-        param.lenIndBuf,
+        odbcParam.cType,
+        odbcParam.sqlType,
+        odbcParam.columnSize,
+        odbcParam.decimalDigits,
+        odbcParam.buf,
+        odbcParam.bufLen,
+        odbcParam.lenIndBuf,
       );
 
-      this.#preventGC.push(param.buf);
-      this.#preventGC.push(param.lenIndBuf);
-
+      this.#paramBindings.set(i, odbcParam);
       i++;
+    }
+  }
+
+  #bindCols(colCount: number) {
+    for (let i = 1; i <= colCount; i++) {
+      const desc = describeCol(this.#stmtHandle, i);
+
+      if (desc.columnSize === 0n || desc.columnSize > MAX_BIND_SIZE) {
+        throw new Error(`Unable to bind column ${desc}!`);
+      }
+      const binding = this.#getColBinding(desc.dataType, desc.columnSize);
+
+      bindCol(
+        this.#stmtHandle,
+        i,
+        binding.cType,
+        binding.buf,
+        binding.bufLen,
+        binding.lenIndBuf,
+      );
+      this.#colBindings.set(desc.name, binding);
     }
   }
 
@@ -200,19 +188,7 @@ export class OdbcRequest<O> {
    * @see {@link https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/column-size?view=sql-server-ver17}
    * @see {@link https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/decimal-digits?view=sql-server-ver17}
    */
-  #getOdbcParameter(val: unknown): {
-    cType: ValueType;
-    sqlType: ParameterType;
-    buf:
-      | Int32Array<ArrayBuffer>
-      | BigInt64Array<ArrayBuffer>
-      | Uint8Array<ArrayBuffer>
-      | Float64Array<ArrayBuffer>;
-    columnSize: bigint;
-    decimalDigits: number;
-    bufLen: bigint;
-    lenIndBuf: BigInt64Array<ArrayBuffer>;
-  } {
+  #getParamBinding(val: unknown): ParamBinding {
     // NULL
     if (val === null || typeof val === "undefined" || val === undefined) {
       return {
@@ -302,7 +278,7 @@ export class OdbcRequest<O> {
     // TODO: implement Dates + Buffers
   }
 
-  #getOutputBuffer(dataType: number, columnSize: bigint): ColBinding {
+  #getColBinding(dataType: number, columnSize: bigint): ColBinding {
     const createInd = () => new BigInt64Array(1);
 
     // 32-bit integer
@@ -376,29 +352,74 @@ export class OdbcRequest<O> {
     throw new Error(`Unsupported SQL dataType: ${dataType}`);
   }
 
-  #readRow(bindings: ColBinding[]) {
-    return bindings.map(({ buf, lenIndBuf, cType }) => {
+  #readRow(bindings: Map<string, ColBinding>) {
+    const row: Record<string, unknown> = {};
+
+    for (const [colName, { buf, lenIndBuf, cType }] of bindings) {
       const byteLen = Number(lenIndBuf[0]);
 
       if (byteLen === SQL_NULL_DATA) {
-        return null;
+        row[colName] = null;
+        continue;
       }
 
+      let value: number | string | bigint | boolean;
       switch (cType) {
         case ValueType.SQL_C_SLONG:
         case ValueType.SQL_C_SBIGINT:
         case ValueType.SQL_C_DOUBLE:
-          return buf[0];
+          value = buf[0];
+          break;
 
         case ValueType.SQL_C_BIT:
-          return buf[0] === 1;
+          value = buf[0] === 1;
+          break;
 
         case ValueType.SQL_C_WCHAR:
-          return bufToStr(buf as Uint16Array, byteLen / 2);
+          value = bufToStr(buf as Uint16Array, byteLen / 2);
+          break;
 
         default:
           throw new Error(`Unknown binding C-Type: ${cType}`);
       }
-    });
+
+      row[colName] = value;
+    }
+
+    return row;
+  }
+
+  async #fetchResultSet() {
+    while (true) {
+      const status = await fetch(this.#stmtHandle);
+
+      if (
+        status === SQLRETURN.SQL_SUCCESS ||
+        status === SQLRETURN.SQL_SUCCESS_WITH_INFO
+      ) {
+        this.#rows.push(this.#readRow(this.#colBindings) as R);
+
+        if (status === SQLRETURN.SQL_SUCCESS_WITH_INFO) {
+          // Run diagnostics
+        }
+
+        continue;
+      }
+
+      if (status === SQLRETURN.SQL_NO_DATA) {
+        break;
+      }
+
+      if (status === SQLRETURN.SQL_ERROR) {
+        throw new Error(`SQLFetch failed: ${
+          getOdbcError(
+            HandleType.SQL_HANDLE_STMT,
+            this.#stmtHandle,
+          )
+        }`);
+      }
+
+      throw new Error(`SQLFetch returned unexpected status: ${status}`);
+    }
   }
 }
