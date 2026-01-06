@@ -33,6 +33,10 @@ export class OdbcConnection implements DatabaseConnection {
   }
 
   async executeQuery<R>(compiledQuery: CompiledQuery): Promise<QueryResult<R>> {
+    if (!this.#dbcHandle) {
+      throw new Error("Connection is closed");
+    }
+
     const request = new OdbcRequest<R>(compiledQuery, this.#dbcHandle);
     const { numAffectedRows, rows } = await request.execute();
 
@@ -49,6 +53,10 @@ export class OdbcConnection implements DatabaseConnection {
     if (!this.#dbcHandle) {
       throw new Error("Connection is closed");
     }
+    if (!Number.isInteger(chunkSize) || chunkSize <= 0) {
+      throw new Error("chunkSize must be a positive integer");
+    }
+
     const request = new OdbcRequest<R>(compiledQuery, this.#dbcHandle);
     yield* request.stream(chunkSize);
   }

@@ -50,7 +50,6 @@ export class OdbcRequest<R> {
   readonly #compiledQuery: CompiledQuery;
   readonly #dbcHandle: Deno.PointerValue;
   readonly #rows: R[] = [];
-
   readonly #paramBindings: Map<number, ParamBinding> = new Map();
   readonly #colBindings: Map<string, ColBinding> = new Map();
 
@@ -83,7 +82,10 @@ export class OdbcRequest<R> {
 
       if (colCount > 0) {
         this.#bindCols(colCount);
-        await this.#fetchResultSet();
+
+        for await (const row of this.#fetchRow()) {
+          this.#rows.push(row);
+        }
       }
 
       return {
@@ -96,26 +98,43 @@ export class OdbcRequest<R> {
   }
 
   async *stream(chunkSize: number): AsyncIterableIterator<QueryResult<R>> {
-    /*await this.#allocateStmt();
+    this.#stmtHandle = allocHandle(
+      HandleType.SQL_HANDLE_STMT,
+      this.#dbcHandle,
+    );
+
     try {
-      this.#execDirect();
+      this.#bindParams();
 
-      let chunk: O[] = [];
-      while (true) {
-        const row = this.#fetchOne();
-        if (!row) break;
+      const { colCount } = await execDirect(
+        this.#compiledQuery.sql,
+        this.#stmtHandle,
+      );
 
-        chunk.push(row);
+      if (colCount === 0) {
+        yield { rows: [] };
+        return;
+      }
 
-        if (chunk.length >= chunkSize) {
-          yield { rows: chunk };
-          chunk = [];
+      this.#bindCols(colCount);
+
+      let buffer: R[] = [];
+
+      for await (const row of this.#fetchRow()) {
+        buffer.push(row);
+
+        if (buffer.length >= chunkSize) {
+          yield { rows: buffer };
+          buffer = [];
         }
       }
-      if (chunk.length > 0) yield { rows: chunk };
+
+      if (buffer.length > 0) {
+        yield { rows: buffer };
+      }
     } finally {
-      this.#freeStmt();
-    }*/
+      this.#cleanup();
+    }
   }
 
   #cleanup(): void {
@@ -391,7 +410,7 @@ export class OdbcRequest<R> {
     return row;
   }
 
-  async #fetchResultSet() {
+  async *#fetchRow(): AsyncGenerator<R> {
     while (true) {
       const status = await fetch(this.#stmtHandle);
 
@@ -399,18 +418,15 @@ export class OdbcRequest<R> {
         status === SQLRETURN.SQL_SUCCESS ||
         status === SQLRETURN.SQL_SUCCESS_WITH_INFO
       ) {
-        this.#rows.push(this.#readRow(this.#colBindings) as R);
+        yield this.#readRow(this.#colBindings) as R;
 
         if (status === SQLRETURN.SQL_SUCCESS_WITH_INFO) {
           // Run diagnostics
         }
-
         continue;
       }
 
-      if (status === SQLRETURN.SQL_NO_DATA) {
-        break;
-      }
+      if (status === SQLRETURN.SQL_NO_DATA) break;
 
       if (status === SQLRETURN.SQL_ERROR) {
         throw new Error(`SQLFetch failed: ${
