@@ -27,14 +27,20 @@ export enum ValueType {
 }
 
 export enum ParameterType {
+  SQL_CHAR = 1,
   SQL_INTEGER = 4,
   SQL_BIGINT = -5,
   SQL_FLOAT = 6,
   SQL_BIT = ValueType.SQL_C_BIT,
-  SQL_TYPE_TIMESTAMP = 93,
   SQL_VARBINARY = -3,
+  SQL_VARCHAR = 12,
+  SQL_LONGVARCHAR = -1,
+  SQL_TYPE_DATE = 91,
+  SQL_TYPE_TIMESTAMP = 93,
+  // found in sqlucode.h
+  SQL_WCHAR = -8,
   SQL_WVARCHAR = -9,
-  DUMMY = 1,
+  SQL_WLONGVARCHAR = -10,
 }
 
 export const SQL_PARAM_INPUT = 1;
@@ -374,6 +380,59 @@ interface OdbcSymbols {
     | SQLRETURN.SQL_ERROR
     | SQLRETURN.SQL_INVALID_HANDLE
   >;
+
+  /**
+   * `SQLBindCol` binds application data buffers to columns in the result set.
+   *
+   * ```cpp
+   * SQLRETURN SQLBindCol(
+   *       SQLHSTMT       StatementHandle,
+   *       SQLUSMALLINT   ColumnNumber,
+   *       SQLSMALLINT    TargetType,
+   *       SQLPOINTER     TargetValuePtr,
+   *       SQLLEN         BufferLength,
+   *       SQLLEN *       StrLen_or_IndPtr);
+   * ```
+   *
+   * @param statementHandle Statement handle.
+   * @param columnNumber Number of the result set column to bind. Columns are numbered in increasing column order starting at 0, where column 0 is the bookmark column. If bookmarks are not used - that is, the SQL_ATTR_USE_BOOKMARKS statement attribute is set to SQL_UB_OFF - then column numbers start at 1.
+   * @param targetType The identifier of the C data type of the *TargetValuePtr buffer. When it is retrieving data from the data source with SQLFetch, SQLFetchScroll, SQLBulkOperations, or SQLSetPos, the driver converts the data to this type; when it sends data to the data source with SQLBulkOperations or SQLSetPos, the driver converts the data from this type. For a list of valid C data types and type identifiers, see the C Data Types section in Appendix D: Data Types.
+   * @param targetValuePtr Pointer to the data buffer to bind to the column. SQLFetch and SQLFetchScroll return data in this buffer. SQLBulkOperations returns data in this buffer when Operation is SQL_FETCH_BY_BOOKMARK; it retrieves data from this buffer when Operation is SQL_ADD or SQL_UPDATE_BY_BOOKMARK. SQLSetPos returns data in this buffer when Operation is SQL_REFRESH; it retrieves data from this buffer when Operation is SQL_UPDATE.
+   * @param bufferLength Length of the *TargetValuePtr buffer in bytes.
+   * @param strLen_or_IndPtr Pointer to the length/indicator buffer to bind to the column. SQLFetch and SQLFetchScroll return a value in this buffer. SQLBulkOperations retrieves a value from this buffer when Operation is SQL_ADD, SQL_UPDATE_BY_BOOKMARK, or SQL_DELETE_BY_BOOKMARK. SQLBulkOperations returns a value in this buffer when Operation is SQL_FETCH_BY_BOOKMARK. SQLSetPos returns a value in this buffer when Operation is SQL_REFRESH; it retrieves a value from this buffer when Operation is SQL_UPDATE.
+   */
+  SQLBindCol(
+    statementHandle: Deno.PointerValue,
+    columnNumber: number,
+    targetType: number,
+    targetValuePtr: BufferSource,
+    bufferLength: bigint,
+    strLen_or_IndPtr: BufferSource,
+  ): Promise<
+    | SQLRETURN.SQL_SUCCESS
+    | SQLRETURN.SQL_SUCCESS_WITH_INFO
+    | SQLRETURN.SQL_ERROR
+    | SQLRETURN.SQL_INVALID_HANDLE
+  >;
+
+  /**
+   * `SQLFetch` fetches the next rowset of data from the result set and returns data for all bound columns.
+   *
+   * ```cpp
+   * SQLRETURN SQLFetch(
+   *      SQLHSTMT     StatementHandle);
+   * ```
+   *
+   * @param statementHandle Statement handle.
+   */
+  SQLFetch(statementHandle: Deno.PointerValue): Promise<
+    | SQLRETURN.SQL_SUCCESS
+    | SQLRETURN.SQL_SUCCESS_WITH_INFO
+    | SQLRETURN.SQL_NO_DATA
+    | SQLRETURN.SQL_STILL_EXECUTING
+    | SQLRETURN.SQL_ERROR
+    | SQLRETURN.SQL_INVALID_HANDLE
+  >;
 }
 
 const dylib = Deno.dlopen(libPath, {
@@ -483,6 +542,25 @@ const dylib = Deno.dlopen(libPath, {
       "buffer", // SQLSMALLINT * -> out
     ],
     result: "i16", // SQLRETURN
+    nonblocking: true,
+  },
+  SQLBindCol: {
+    parameters: [
+      "pointer", // SQLHSTMT <- in
+      "u16", // SQLUSMALLINT <- in
+      "i16", // SQLSMALLINT <- in
+      "buffer", // SQLPOINTER <- in
+      "i64", // SQLLEN <- in
+      "buffer", // SQLLEN * <- in
+    ],
+    result: "i16",
+    nonblocking: true,
+  },
+  SQLFetch: {
+    parameters: [
+      "pointer", // SQLHSTMT <- in
+    ],
+    result: "i16",
     nonblocking: true,
   },
 });
@@ -765,7 +843,7 @@ export async function describeCol(
   const nameBuf = new Uint16Array(CHAR_LIMIT);
   const nameLenIndBuf = new Int16Array(1);
   const dataTypeBuf = new Int16Array(1);
-  const colSizeBuf = new BigUint64Array(1);
+  const columnSizeBuf = new BigUint64Array(1);
   const decimalDigitsBuf = new Int16Array(1);
   const nullableBuf = new Int16Array(1);
 
@@ -776,7 +854,7 @@ export async function describeCol(
     CHAR_LIMIT,
     nameLenIndBuf,
     dataTypeBuf,
-    colSizeBuf,
+    columnSizeBuf,
     decimalDigitsBuf,
     nullableBuf,
   );
@@ -797,11 +875,58 @@ export async function describeCol(
 
   return {
     name,
-    type: dataTypeBuf[0],
-    size: colSizeBuf[0],
-    scale: decimalDigitsBuf[0],
-    nullableBuf: nullableBuf[0] === 1,
+    dataType: dataTypeBuf[0],
+    columnSize: columnSizeBuf[0],
+    decimalDigits: decimalDigitsBuf[0],
+    isNullable: nullableBuf[0] === 1,
   };
+}
+
+export async function bindCol(
+  stmtHandle: Deno.PointerValue,
+  i: number,
+  cType: ValueType,
+  buf: BufferSource,
+  bufLen: bigint,
+  indLenBuf: BufferSource,
+): Promise<void> {
+  const status = await odbcLib.SQLBindCol(
+    stmtHandle,
+    i,
+    cType,
+    buf,
+    bufLen,
+    indLenBuf,
+  );
+
+  if (
+    status !== SQLRETURN.SQL_SUCCESS &&
+    status !== SQLRETURN.SQL_SUCCESS_WITH_INFO
+  ) {
+    throw new Error(
+      `SQLBindCol failed: ${await getOdbcError(
+        HandleType.SQL_HANDLE_STMT,
+        stmtHandle,
+      )}\n`,
+    );
+  }
+}
+
+export async function fetch(
+  stmtHandle: Deno.PointerValue,
+): ReturnType<OdbcSymbols["SQLFetch"]> {
+  const status = await odbcLib.SQLFetch(
+    stmtHandle,
+  );
+
+  if (status === SQLRETURN.SQL_ERROR) {
+    throw new Error(`SQLFetch failed: ${await getOdbcError(
+      HandleType.SQL_HANDLE_STMT,
+      stmtHandle,
+    )}`);
+  }
+
+  return status;
 }
 
 /**
