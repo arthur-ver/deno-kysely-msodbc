@@ -65,7 +65,7 @@ export class OdbcRequest<R> {
   }
 
   async execute(): Promise<{
-    rowCount: number | undefined;
+    numAffectedRows: bigint;
     rows: R[];
   }> {
     this.#stmtHandle = allocHandle(
@@ -76,17 +76,19 @@ export class OdbcRequest<R> {
     try {
       this.#bindParams();
 
-      const colCount = await execDirect(
+      const { colCount, numAffectedRows } = await execDirect(
         this.#compiledQuery.sql,
         this.#stmtHandle,
       );
-      this.#bindCols(colCount);
 
-      await this.#fetchResultSet();
+      if (colCount > 0) {
+        this.#bindCols(colCount);
+        await this.#fetchResultSet();
+      }
 
       return {
         rows: this.#rows,
-        rowCount: this.#rows.length,
+        numAffectedRows,
       };
     } finally {
       this.#cleanup();

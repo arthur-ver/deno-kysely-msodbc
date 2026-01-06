@@ -34,10 +34,10 @@ export class OdbcConnection implements DatabaseConnection {
 
   async executeQuery<R>(compiledQuery: CompiledQuery): Promise<QueryResult<R>> {
     const request = new OdbcRequest<R>(compiledQuery, this.#dbcHandle);
-    const { rowCount, rows } = await request.execute();
+    const { numAffectedRows, rows } = await request.execute();
 
     return {
-      numAffectedRows: rowCount !== undefined ? BigInt(rowCount) : undefined,
+      numAffectedRows: numAffectedRows !== -1n ? numAffectedRows : undefined,
       rows,
     };
   }

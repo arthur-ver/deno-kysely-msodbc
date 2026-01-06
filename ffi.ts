@@ -254,12 +254,11 @@ interface OdbcSymbols {
   SQLRowCount(
     statementHandle: Deno.PointerValue,
     rowCountPtr: BufferSource,
-  ): Promise<
+  ):
     | SQLRETURN.SQL_SUCCESS
     | SQLRETURN.SQL_SUCCESS_WITH_INFO
     | SQLRETURN.SQL_ERROR
-    | SQLRETURN.SQL_INVALID_HANDLE
-  >;
+    | SQLRETURN.SQL_INVALID_HANDLE;
 
   /**
    * `SQLBindParameter` binds a buffer to a parameter marker in a SQL statement. `SQLBindParameter` supports binding to a Unicode C data type, even if the underlying driver does not support Unicode data.
@@ -502,7 +501,6 @@ const dylib = Deno.dlopen(libPath, {
       "buffer", // SQLLEN * -> out
     ],
     result: "i16", // SQLRETURN
-    nonblocking: true,
   },
   SQLBindParameter: {
     parameters: [
@@ -655,7 +653,7 @@ export async function driverConnect(
 export async function execDirect(
   rawSql: string,
   stmtHandle: Deno.PointerValue,
-): Promise<number> {
+): Promise<{ colCount: number; numAffectedRows: bigint }> {
   const rawSqlEncoded = strToBuf(rawSql);
   const ret = await odbcLib.SQLExecDirectW(stmtHandle, rawSqlEncoded, SQL_NTS);
 
@@ -674,8 +672,10 @@ export async function execDirect(
     );
   }
 
-  const colCount = numResultCols(stmtHandle);
-  return colCount;
+  return {
+    colCount: numResultCols(stmtHandle),
+    numAffectedRows: rowCount(stmtHandle),
+  };
 }
 
 /**
@@ -685,10 +685,10 @@ export async function execDirect(
  * @returns The count of affected rows.
  * @throws If the API call fails.
  */
-export async function rowCount(stmtHandle: Deno.PointerValue): Promise<bigint> {
-  const rowCountBuf = new BigUint64Array(1);
+export function rowCount(stmtHandle: Deno.PointerValue): bigint {
+  const rowCountBuf = new BigInt64Array(1);
 
-  const status = await odbcLib.SQLRowCount(
+  const status = odbcLib.SQLRowCount(
     stmtHandle,
     rowCountBuf,
   );
