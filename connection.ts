@@ -9,18 +9,18 @@ import { OdbcRequest } from "./request.ts";
 
 export class OdbcConnection implements DatabaseConnection {
   readonly #odbcLib: OdbcLib;
-  readonly #connectionString: string;
+  readonly #connString: string;
   #envHandle: Deno.PointerValue;
   #dbcHandle: Deno.PointerValue = null;
   #hasSocketError: boolean = false;
 
   constructor(
     odbcLib: OdbcLib,
-    connectionString: string,
+    connString: string,
     envHandle: Deno.PointerValue,
   ) {
     this.#odbcLib = odbcLib;
-    this.#connectionString = connectionString;
+    this.#connString = connString;
     this.#envHandle = envHandle;
   }
 
@@ -31,7 +31,7 @@ export class OdbcConnection implements DatabaseConnection {
     );
     try {
       await this.#odbcLib.driverConnect(
-        this.#connectionString,
+        this.#connString,
         this.#dbcHandle,
       );
     } catch (error) {

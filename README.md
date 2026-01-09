@@ -21,6 +21,34 @@ Interface)** to talk directly to the OS-level **Microsoft ODBC Driver**. This
 results in a "pure" Deno implementation that interacts with the database at the
 C-level.
 
+## Usage
+
+```ts
+import { MssqlOdbcDialect } from "./mod.ts";
+
+const dialect = new MssqlOdbcDialect({
+  tarn: {
+    options: {
+      min: 0,
+      max: 10,
+    },
+  },
+  odbc: {
+    libPath: "/opt/homebrew/lib/libmsodbcsql.18.dylib",
+    connString: [
+      "driver={ODBC Driver 18 for SQL Server}",
+      "server=127.0.0.1",
+      "uid=sa",
+      "pwd=Test1234$",
+      "encrypt=yes",
+      "trustServerCertificate=yes",
+    ].join(";"),
+  },
+});
+
+const db = new Kysely()<Database>({ dialect });
+```
+
 ## Supported SQL Data Types
 
 The following table details how SQL column types are mapped to JavaScript

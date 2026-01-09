@@ -23,7 +23,7 @@ export interface OdbcDialectConfig
 
 export interface Odbc {
   libPath: string;
-  connectionString: string;
+  connString: string;
 }
 
 export class OdbcDriver implements Driver {
@@ -45,7 +45,7 @@ export class OdbcDriver implements Driver {
         }
         const connection = new OdbcConnection(
           this.#odbcLib,
-          this.#config.odbc.connectionString,
+          this.#config.odbc.connString,
           this.#envHandle,
         );
         await connection.connect();
