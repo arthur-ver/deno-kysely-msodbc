@@ -18,6 +18,8 @@ export enum SQLRETURN {
 export enum ValueType {
   SQL_C_SLONG = -16,
   SQL_C_SBIGINT = -25,
+  SQL_C_UTINYINT = -28,
+  SQL_C_SSHORT = -15,
   SQL_C_DOUBLE = 8,
   SQL_C_BIT = -7,
   SQL_C_TYPE_TIMESTAMP = 11,
@@ -27,12 +29,13 @@ export enum ValueType {
 }
 
 export enum ParameterType {
+  SQL_NUMERIC = 2,
+  SQL_DECIMAL = 3,
   SQL_CHAR = 1,
   SQL_INTEGER = 4,
   SQL_BIGINT = -5,
   SQL_FLOAT = 6,
   SQL_BIT = ValueType.SQL_C_BIT,
-  SQL_VARBINARY = -3,
   SQL_VARCHAR = 12,
   SQL_LONGVARCHAR = -1,
   SQL_TYPE_DATE = 91,
@@ -41,6 +44,12 @@ export enum ParameterType {
   SQL_WCHAR = -8,
   SQL_WVARCHAR = -9,
   SQL_WLONGVARCHAR = -10,
+  // found in sqlext.h
+  SQL_BINARY = -2,
+  SQL_VARBINARY = -3,
+  SQL_LONGVARBINARY = -4,
+  SQL_TINYINT = -6,
+  SQL_SMALLINT = 5,
 }
 
 export const SQL_PARAM_INPUT = 1;

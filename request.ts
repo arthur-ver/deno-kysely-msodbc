@@ -24,6 +24,7 @@ type ColBinding = {
   cType: ValueType;
   buf:
     | Uint8Array<ArrayBuffer>
+    | Int16Array<ArrayBuffer>
     | Int32Array<ArrayBuffer>
     | BigInt64Array<ArrayBuffer>
     | Float64Array<ArrayBuffer>
@@ -322,6 +323,38 @@ export class OdbcRequest<R> {
       };
     }
 
+    if (dataType === ParameterType.SQL_TINYINT) {
+      return {
+        cType: ValueType.SQL_C_UTINYINT,
+        buf: new Uint8Array(1),
+        bufLen: 1n,
+        lenIndBuf: createInd(),
+      };
+    }
+
+    if (dataType === ParameterType.SQL_SMALLINT) {
+      return {
+        cType: ValueType.SQL_C_SSHORT,
+        buf: new Int16Array(1),
+        bufLen: 2n,
+        lenIndBuf: createInd(),
+      };
+    }
+
+    // Safest way is to bind SQL_NUMERIC and SQL_DECIMAL as strings since JS could loose precision when treating these as numbers
+    if (
+      dataType === ParameterType.SQL_NUMERIC ||
+      dataType === ParameterType.SQL_DECIMAL
+    ) {
+      const len = Number(columnSize) + 4;
+      return {
+        cType: ValueType.SQL_C_WCHAR,
+        buf: new Uint16Array(len),
+        bufLen: BigInt(len * 2),
+        lenIndBuf: createInd(),
+      };
+    }
+
     if (dataType === ParameterType.SQL_FLOAT) {
       return {
         cType: ValueType.SQL_C_DOUBLE,
@@ -336,6 +369,20 @@ export class OdbcRequest<R> {
         cType: ValueType.SQL_C_BIT,
         buf: new Uint8Array(1),
         bufLen: 1n,
+        lenIndBuf: createInd(),
+      };
+    }
+
+    if (
+      dataType === ParameterType.SQL_BINARY ||
+      dataType === ParameterType.SQL_VARBINARY ||
+      dataType === ParameterType.SQL_LONGVARBINARY
+    ) {
+      const len = Number(columnSize);
+      return {
+        cType: ValueType.SQL_C_BINARY,
+        buf: new Uint8Array(len),
+        bufLen: BigInt(len),
         lenIndBuf: createInd(),
       };
     }
@@ -361,7 +408,7 @@ export class OdbcRequest<R> {
       dataType === ParameterType.SQL_TYPE_TIMESTAMP ||
       dataType === ParameterType.SQL_TYPE_DATE
     ) {
-      const len = 30; // Sufficient for "YYYY-MM-DD HH:MM:SS.FFF..."
+      const len = 50; // Sufficient for "YYYY-MM-DD HH:MM:SS.FFF..."
       return {
         cType: ValueType.SQL_C_WCHAR,
         buf: new Uint16Array(len),
@@ -384,16 +431,22 @@ export class OdbcRequest<R> {
         continue;
       }
 
-      let value: number | string | bigint | boolean;
+      let value: number | string | bigint | boolean | Uint8Array;
       switch (cType) {
         case ValueType.SQL_C_SLONG:
         case ValueType.SQL_C_SBIGINT:
         case ValueType.SQL_C_DOUBLE:
+        case ValueType.SQL_C_UTINYINT:
+        case ValueType.SQL_C_SSHORT:
           value = buf[0];
           break;
 
         case ValueType.SQL_C_BIT:
           value = buf[0] === 1;
+          break;
+
+        case ValueType.SQL_C_BINARY:
+          value = (buf as Uint8Array).slice(0, byteLen);
           break;
 
         case ValueType.SQL_C_WCHAR:
