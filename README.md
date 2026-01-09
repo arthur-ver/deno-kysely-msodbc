@@ -21,6 +21,12 @@ Interface)** to talk directly to the OS-level **Microsoft ODBC Driver**. This
 results in a "pure" Deno implementation that interacts with the database at the
 C-level.
 
+## Prerequisites
+
+> [!IMPORTANT]
+> This library requires the **Microsoft ODBC Driver for SQL Server** to be
+> installed on your system.
+
 ## Usage
 
 ```ts
