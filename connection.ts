@@ -4,33 +4,36 @@ import {
   QueryResult,
   TransactionSettings,
 } from "@kysely/kysely";
-import {
-  allocHandle,
-  driverConnect,
-  HandleType,
-  odbcLib,
-  rollbackTransaction,
-} from "./ffi.ts";
+import { HandleType, type OdbcLib } from "./odbc.ts";
 import { OdbcRequest } from "./request.ts";
 
 export class OdbcConnection implements DatabaseConnection {
+  readonly #odbcLib: OdbcLib;
   readonly #connectionString: string;
   #envHandle: Deno.PointerValue;
   #dbcHandle: Deno.PointerValue = null;
   #hasSocketError: boolean = false;
 
-  constructor(connectionString: string, envHandle: Deno.PointerValue) {
+  constructor(
+    odbcLib: OdbcLib,
+    connectionString: string,
+    envHandle: Deno.PointerValue,
+  ) {
+    this.#odbcLib = odbcLib;
     this.#connectionString = connectionString;
     this.#envHandle = envHandle;
   }
 
   async connect(): Promise<this> {
-    this.#dbcHandle = allocHandle(
+    this.#dbcHandle = this.#odbcLib.allocHandle(
       HandleType.SQL_HANDLE_DBC,
       this.#envHandle,
     );
     try {
-      await driverConnect(this.#connectionString, this.#dbcHandle);
+      await this.#odbcLib.driverConnect(
+        this.#connectionString,
+        this.#dbcHandle,
+      );
     } catch (error) {
       this.#hasSocketError = true;
       throw error;
@@ -43,7 +46,11 @@ export class OdbcConnection implements DatabaseConnection {
       throw new Error("Connection is closed");
     }
 
-    const request = new OdbcRequest<R>(compiledQuery, this.#dbcHandle);
+    const request = new OdbcRequest<R>(
+      this.#odbcLib,
+      compiledQuery,
+      this.#dbcHandle,
+    );
     const { numAffectedRows, rows } = await request.execute();
 
     return {
@@ -63,7 +70,11 @@ export class OdbcConnection implements DatabaseConnection {
       throw new Error("chunkSize must be a positive integer");
     }
 
-    const request = new OdbcRequest<R>(compiledQuery, this.#dbcHandle);
+    const request = new OdbcRequest<R>(
+      this.#odbcLib,
+      compiledQuery,
+      this.#dbcHandle,
+    );
     yield* request.stream(chunkSize);
   }
 
@@ -78,11 +89,11 @@ export class OdbcConnection implements DatabaseConnection {
 
     try {
       // just in case we weren't actually connected
-      await odbcLib.SQLDisconnect(this.#dbcHandle);
+      await this.#odbcLib.disconnect(this.#dbcHandle);
     } catch {
       /* ignore */
     }
-    odbcLib.SQLFreeHandle(HandleType.SQL_HANDLE_DBC, this.#dbcHandle);
+    this.#odbcLib.freeHandle(HandleType.SQL_HANDLE_DBC, this.#dbcHandle);
     this.#dbcHandle = null;
   }
 
@@ -95,7 +106,11 @@ export class OdbcConnection implements DatabaseConnection {
     }
 
     const compiledQuery = CompiledQuery.raw("select 1");
-    const request = new OdbcRequest<unknown>(compiledQuery, this.#dbcHandle);
+    const request = new OdbcRequest<unknown>(
+      this.#odbcLib,
+      compiledQuery,
+      this.#dbcHandle,
+    );
     await request.execute();
 
     return true;
@@ -103,6 +118,6 @@ export class OdbcConnection implements DatabaseConnection {
 
   async reset(): Promise<void> {
     if (this.#dbcHandle === null) return;
-    await rollbackTransaction(this.#dbcHandle);
+    await this.#odbcLib.rollbackTransaction(this.#dbcHandle);
   }
 }

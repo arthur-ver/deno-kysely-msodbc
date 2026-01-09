@@ -60,20 +60,583 @@ export const SQL_NTS = -3;
 
 export const SQL_ROLLBACK = 1;
 
-let libPath: string;
+const libDefinitions = {
+  // --- ASYNC (I/O BOUND) ---
+  SQLDriverConnectW: {
+    parameters: [
+      "pointer", // SQLHDBC <- in
+      "pointer", // SQLHWND <- in
+      "buffer", // SQLWCHAR * <- in
+      "i16", // SQLSMALLINT -> out
+      "pointer", // SQLWCHAR * -> out (always NULL, so using pointer instead of buffer)
+      "i16", // SQLSMALLINT <- in
+      "pointer", // SQLSMALLINT * -> out (always NULL, so using pointer instead of buffer)
+      "u16", // SQLUSMALLINT <- in
+    ],
+    result: "i16", // SQLRETURN
+    nonblocking: true,
+  },
+  SQLDisconnect: {
+    parameters: [
+      "pointer", // SQLHDBC <- in
+    ],
+    result: "i16", // SQLRETURN
+    nonblocking: true,
+  },
+  SQLExecDirectW: {
+    parameters: [
+      "pointer", // SQLHSTMT <- in
+      "buffer", // SQLWCHAR * <- in
+      "i32", // SQLINTEGER -> out
+    ],
+    result: "i16", // SQLRETURN
+    nonblocking: true,
+  },
+  SQLFetch: {
+    parameters: [
+      "pointer", // SQLHSTMT <- in
+    ],
+    result: "i16",
+    nonblocking: true,
+  },
+  SQLEndTran: {
+    parameters: [
+      "u16", // SQLSMALLINT <- in
+      "pointer", // SQLHANDLE <- in
+      "u16", // SQLSMALLINT <- in
+    ],
+    result: "i16",
+    nonblocking: true,
+  },
+  // --- SYNC (MEMORY BOUND) ---
+  SQLAllocHandle: {
+    parameters: [
+      "i16", // SQLSMALLINT <- in
+      "pointer", // SQLHANDLE <- in
+      "buffer", // SQLHANDLE * -> out
+    ],
+    result: "i16", // SQLRETURN
+  },
+  SQLGetDiagRecW: {
+    parameters: [
+      "i16", // SQLSMALLINT <- in
+      "pointer", // SQLHANDLE <- in
+      "i16", // SQLSMALLINT <- in
+      "buffer", // SQLWCHAR * -> out
+      "buffer", // SQLINTEGER * -> out
+      "buffer", // SQLWCHAR * -> out
+      "i16", // SQLSMALLINT <- in
+      "buffer", // SQLSMALLINT * -> out
+    ],
+    result: "i16", // SQLRETURN
+  },
+  SQLFreeHandle: {
+    parameters: [
+      "i16", // HandleType <- in
+      "pointer", // SQLHANDLE <- in
+    ],
+    result: "i16", // SQLRETURN
+  },
+  SQLRowCount: {
+    parameters: [
+      "pointer", // SQLHSTMT <- in
+      "buffer", // SQLLEN * -> out
+    ],
+    result: "i16", // SQLRETURN
+  },
+  SQLBindParameter: {
+    parameters: [
+      "pointer", // SQLHSTMT <- in
+      "u16", // SQLUSMALLINT <- in
+      "i16", // SQLSMALLINT <- in
+      "i16", // SQLSMALLINT <- in
+      "i16", // SQLSMALLINT <- in
+      "u64", // SQLULEN <- in
+      "i16", // SQLSMALLINT <- in
+      "buffer", // SQLPOINTER <- in
+      "i64", // SQLLEN <- in
+      "buffer", // SQLLEN * <- in
+    ],
+    result: "i16", // SQLRETURN
+  },
+  SQLNumResultCols: {
+    parameters: [
+      "pointer", // SQLHSTMT <- in
+      "buffer", // SQLSMALLINT * -> out
+    ],
+    result: "i16", // SQLRETURN
+  },
+  SQLDescribeColW: {
+    parameters: [
+      "pointer", // SQLHSTMT <- in
+      "u16", // SQLUSMALLINT <- in
+      "buffer", // SQLCHAR * -> out
+      "i16", // SQLSMALLINT <- in
+      "buffer", // SQLSMALLINT * -> out
+      "buffer", // SQLSMALLINT * -> out
+      "buffer", // SQLULEN * -> out
+      "buffer", // SQLSMALLINT * -> out
+      "buffer", // SQLSMALLINT * -> out
+    ],
+    result: "i16", // SQLRETURN
+  },
+  SQLBindCol: {
+    parameters: [
+      "pointer", // SQLHSTMT <- in
+      "u16", // SQLUSMALLINT <- in
+      "i16", // SQLSMALLINT <- in
+      "buffer", // SQLPOINTER <- in
+      "i64", // SQLLEN <- in
+      "buffer", // SQLLEN * <- in
+    ],
+    result: "i16",
+  },
+} as const;
 
-switch (Deno.build.os) {
-  case "darwin":
-    libPath = "/opt/homebrew/lib/libmsodbcsql.18.dylib";
-    break;
-  case "linux":
-    libPath = "/opt/microsoft/msodbcsql18/lib64/";
-    break;
-  case "windows":
-    libPath = "C:\\Windows\\System32\\msodbcsql18.dll";
-    break;
-  default:
-    throw new Error(`Unsupported OS: ${Deno.build.os}`);
+export class OdbcLib {
+  readonly #dylib: Deno.DynamicLibrary<typeof libDefinitions>;
+  readonly #symbols: OdbcSymbols;
+
+  constructor(libPath: string) {
+    this.#dylib = Deno.dlopen(libPath, libDefinitions);
+    this.#symbols = this.#dylib.symbols;
+  }
+
+  /**
+   * Allocates a new ODBC handle of the specified type.
+   *
+   * This wrapper simplifies `SQLAllocHandle` by automatically creating the required
+   * output buffer, checking the status code for errors, and converting the resulting
+   * memory address into a usable `Deno.PointerValue` object.
+   *
+   * @param handleType The type of handle to allocate (e.g., `SQL_HANDLE_ENV`, `SQL_HANDLE_DBC`).
+   * @param parentHandle The parent context for the new handle. Pass `null` if allocating an Environment (`ENV`) handle.
+   * @returns Newly allocated handle pointer.
+   * @throws If the ODBC call returns a non-success status (e.g., `SQL_ERROR`) or if the driver returns a null pointer.
+   */
+  allocHandle(
+    handleType: HandleType,
+    parentHandle: Deno.PointerValue,
+  ): Deno.PointerValue {
+    const outHandleBuf = new BigUint64Array(1);
+
+    const status = this.#symbols.SQLAllocHandle(
+      handleType,
+      parentHandle,
+      outHandleBuf,
+    );
+
+    if (
+      status !== SQLRETURN.SQL_SUCCESS &&
+      status !== SQLRETURN.SQL_SUCCESS_WITH_INFO
+    ) {
+      throw new Error(`SQLAllocHandle failed: ${SQLRETURN[status]}`);
+    }
+
+    const handleAddress = outHandleBuf[0];
+    if (handleAddress === 0n) {
+      throw new Error(
+        `SQLAllocHandle returned invalid (null) handle (Type: ${
+          HandleType[handleType]
+        })`,
+      );
+    }
+
+    return Deno.UnsafePointer.create(handleAddress);
+  }
+
+  /**
+   * @param handleType
+   * @param handle
+   */
+  freeHandle(handleType: HandleType, handle: Deno.PointerValue): void {
+    const status = this.#symbols.SQLFreeHandle(handleType, handle);
+
+    if (
+      status !== SQLRETURN.SQL_SUCCESS
+    ) {
+      throw new Error(`SQLFreeHandle failed: ${SQLRETURN[status]}`);
+    }
+  }
+
+  /**
+   * Establishes a connection to a driver and a data source using a connection string.
+   *
+   * This function wraps `SQLDriverConnectW`. It uses `SQL_DRIVER_NOPROMPT`, meaning
+   * the connection string must contain all necessary information (DSN, User, Password, etc.)
+   * to connect without user interaction. If the string is insufficient, the connection
+   * will fail rather than prompting the user with a dialog.
+   *
+   * @param connStr The full connection string (e.g., `"driver={ODBC Driver 18 for SQL Server};server=127.0.0.1;uid=sa;pwd=Test123$;encrypt=yes;trustServerCertificate=yes;"`.
+   * @param dbcHandle A valid Connection Handle allocated via `SQLAllocHandle`.
+   * @throws If the connection fails. The error message will contain the specific SQL state and diagnostic message retrieved from the driver.
+   * @returns Resolves when the connection is successfully established.
+   */
+  async driverConnect(
+    connStr: string,
+    dbcHandle: Deno.PointerValue,
+  ): Promise<void> {
+    const connStrEncoded = strToBuf(connStr);
+
+    const status = await this.#symbols.SQLDriverConnectW(
+      dbcHandle,
+      null,
+      connStrEncoded,
+      SQL_NTS,
+      null,
+      0,
+      null,
+      SQL_DRIVER_NOPROMPT,
+    );
+
+    if (
+      status !== SQLRETURN.SQL_SUCCESS &&
+      status !== SQLRETURN.SQL_SUCCESS_WITH_INFO
+    ) {
+      const errorDetail = this.getOdbcError(
+        HandleType.SQL_HANDLE_DBC,
+        dbcHandle,
+      );
+      throw new Error(`SQLDriverConnectW failed:\n${errorDetail}`);
+    }
+  }
+
+  async disconnect(dbcHandle: Deno.PointerValue) {
+    const status = await this.#symbols.SQLDisconnect(dbcHandle);
+
+    if (
+      status !== SQLRETURN.SQL_SUCCESS &&
+      status !== SQLRETURN.SQL_SUCCESS_WITH_INFO
+    ) {
+      const errorDetail = this.getOdbcError(
+        HandleType.SQL_HANDLE_DBC,
+        dbcHandle,
+      );
+      throw new Error(`SQLDisconnect failed:\n${errorDetail}`);
+    }
+  }
+
+  /**
+   * Executes a SQL statement directly without prior preparation.
+   *
+   * This function wraps `SQLExecDirectW`. It is the fastest way to execute a statement once.
+   *
+   * @param rawSql The SQL statement to execute.
+   * @param stmtHandle A valid Statement Handle.
+   * @throws If execution fails. The error includes the specific ODBC diagnostic message and the SQL that caused the failure.
+   * @returns Resolves to number of columns in the result set
+   */
+  async execDirect(
+    rawSql: string,
+    stmtHandle: Deno.PointerValue,
+  ): Promise<{ colCount: number; numAffectedRows: bigint }> {
+    const rawSqlEncoded = strToBuf(rawSql);
+    const ret = await this.#symbols.SQLExecDirectW(
+      stmtHandle,
+      rawSqlEncoded,
+      SQL_NTS,
+    );
+
+    if (
+      ret !== SQLRETURN.SQL_SUCCESS &&
+      ret !== SQLRETURN.SQL_SUCCESS_WITH_INFO &&
+      ret !== SQLRETURN.SQL_NO_DATA
+    ) {
+      throw new Error(
+        `Execution Error: ${
+          this.getOdbcError(
+            HandleType.SQL_HANDLE_STMT,
+            stmtHandle,
+          )
+        }\nSQL: ${rawSql}`,
+      );
+    }
+
+    return {
+      colCount: this.numResultCols(stmtHandle),
+      numAffectedRows: this.rowCount(stmtHandle),
+    };
+  }
+
+  /**
+   * Returns the number of rows affected by an `UPDATE`, `INSERT`, or `DELETE` statement.
+   *
+   * @param stmtHandle The statement handle (HSTMT) on which the operation was performed.
+   * @returns The count of affected rows.
+   * @throws If the API call fails.
+   */
+  rowCount(stmtHandle: Deno.PointerValue): bigint {
+    const rowCountBuf = new BigInt64Array(1);
+
+    const status = this.#symbols.SQLRowCount(
+      stmtHandle,
+      rowCountBuf,
+    );
+
+    if (
+      status !== SQLRETURN.SQL_SUCCESS &&
+      status !== SQLRETURN.SQL_SUCCESS_WITH_INFO
+    ) {
+      throw new Error(`SQLRowCount failed: ${SQLRETURN[status]}`);
+    }
+
+    return rowCountBuf[0];
+  }
+
+  /**
+   * Retrieves all diagnostic records (errors and warnings) associated with a specific handle.
+   *
+   * This function loops through available diagnostic records (`SQLGetDiagRecW`) until `SQL_NO_DATA` is returned. It captures the SQL State, Native Error Code, and the human-readable Message Text for each record.
+   *
+   * @param handleType The type of handle (e.g., `SQL_HANDLE_ENV`, `SQL_HANDLE_DBC`, `SQL_HANDLE_STMT`).
+   * @param handle The pointer to the handle to inspect.
+   * @returns A single string containing all error messages joined by newlines. Returns `"Unknown ODBC Error"` if no records are found.
+   */
+  getOdbcError(
+    handleType: HandleType,
+    handle: Deno.PointerValue,
+  ): string {
+    const errors: string[] = [];
+    let i = 1;
+
+    while (true) {
+      const stateBuf = new Uint16Array(6);
+      const nativeErrBuf = new Int32Array(1);
+      const msgBuf = new Uint16Array(512);
+      const msgLenBuf = new Int16Array(1);
+
+      const status = this.#symbols.SQLGetDiagRecW(
+        handleType,
+        handle,
+        i,
+        stateBuf,
+        nativeErrBuf,
+        msgBuf,
+        msgBuf.length,
+        msgLenBuf,
+      );
+
+      if (status === SQLRETURN.SQL_NO_DATA) break;
+
+      const state = bufToStr(stateBuf, 5);
+      const msg = bufToStr(msgBuf, msgLenBuf[0]);
+
+      errors.push(`[${state}] ${msg} (Code: ${nativeErrBuf[0]})`);
+      i++;
+    }
+
+    return errors.length > 0 ? errors.join("\n") : "Unknown ODBC Error";
+  }
+
+  /**
+   * Wrapper for `SQLBindParameter` that binds a buffer to a parameter marker in the SQL statement.
+   *
+   * @param stmtHandle Statement handle.
+   * @param i The parameter index number (ordered sequentially starting at 1).
+   * @param cType The C data type identifier (e.g., `SQL_C_SLONG`, `SQL_C_WCHAR`) describing the format of `buf`.
+   * @param sqlType The SQL data type identifier (e.g., `SQL_INTEGER`, `SQL_WVARCHAR`) describing the destination column.
+   * @param columnSize The precision or column size of the corresponding parameter marker. **Ignored for fixed-width types like Integer/Float; required for Strings/Decimals**.
+   * @param decimalDigits The decimal digits (scale) of the corresponding parameter marker.
+   * @param buf The buffer containing the actual parameter data.
+   * @param bufLen The length of the `buf` buffer in bytes.
+   * @param indLenBuf A pointer to a buffer (usually `BigInt64Array`) containing the data length or null indicator.
+   * @returns Resolves if binding is successful.
+   * @throws Throws a detailed ODBC error message if `SQLBindParameter` fails.
+   */
+  bindParameter(
+    stmtHandle: Deno.PointerValue,
+    i: number,
+    cType: ValueType,
+    sqlType: ParameterType,
+    columnSize: bigint,
+    decimalDigits: number,
+    buf: BufferSource,
+    bufLen: bigint,
+    indLenBuf: BufferSource,
+  ): void {
+    const status = this.#symbols.SQLBindParameter(
+      stmtHandle,
+      i,
+      SQL_PARAM_INPUT,
+      cType,
+      sqlType,
+      columnSize,
+      decimalDigits,
+      buf,
+      bufLen,
+      indLenBuf,
+    );
+
+    if (
+      status !== SQLRETURN.SQL_SUCCESS &&
+      status !== SQLRETURN.SQL_SUCCESS_WITH_INFO
+    ) {
+      throw new Error(
+        `SQLBindParameter failed: ${
+          this.getOdbcError(
+            HandleType.SQL_HANDLE_STMT,
+            stmtHandle,
+          )
+        }\n`,
+      );
+    }
+  }
+
+  /**
+   * Wrapper for `SQLNumResultCols` that returns the number of columns in the result set for a prepared or executed statement.
+   *
+   * @param stmtHandle The handle to the statement.
+   * @returns A promise that resolves to the number of columns in the result set.
+   * @throws If the ODBC function call fails
+   */
+  numResultCols(
+    stmtHandle: Deno.PointerValue,
+  ): number {
+    const colCountBuf = new Int16Array(1);
+
+    const status = this.#symbols.SQLNumResultCols(
+      stmtHandle,
+      colCountBuf,
+    );
+
+    if (
+      status !== SQLRETURN.SQL_SUCCESS &&
+      status !== SQLRETURN.SQL_SUCCESS_WITH_INFO
+    ) {
+      throw new Error(`SQLNumResultCols failed: ${SQLRETURN[status]}`);
+    }
+
+    return colCountBuf[0];
+  }
+
+  describeCol(
+    stmtHandle: Deno.PointerValue,
+    colNumber: number,
+  ) {
+    const CHAR_LIMIT = 256;
+
+    const nameBuf = new Uint16Array(CHAR_LIMIT);
+    const nameLenIndBuf = new Int16Array(1);
+    const dataTypeBuf = new Int16Array(1);
+    const columnSizeBuf = new BigUint64Array(1);
+    const decimalDigitsBuf = new Int16Array(1);
+    const nullableBuf = new Int16Array(1);
+
+    const status = this.#symbols.SQLDescribeColW(
+      stmtHandle,
+      colNumber,
+      nameBuf,
+      CHAR_LIMIT,
+      nameLenIndBuf,
+      dataTypeBuf,
+      columnSizeBuf,
+      decimalDigitsBuf,
+      nullableBuf,
+    );
+
+    if (
+      status !== SQLRETURN.SQL_SUCCESS &&
+      status !== SQLRETURN.SQL_SUCCESS_WITH_INFO
+    ) {
+      throw new Error(
+        `SQLDescribeColW failed: ${
+          this.getOdbcError(
+            HandleType.SQL_HANDLE_STMT,
+            stmtHandle,
+          )
+        }\n`,
+      );
+    }
+
+    const name = bufToStr(nameBuf, nameLenIndBuf[0]);
+
+    return {
+      name,
+      dataType: dataTypeBuf[0],
+      columnSize: columnSizeBuf[0],
+      decimalDigits: decimalDigitsBuf[0],
+      isNullable: nullableBuf[0] === 1,
+    };
+  }
+
+  bindCol(
+    stmtHandle: Deno.PointerValue,
+    i: number,
+    cType: ValueType,
+    buf: BufferSource,
+    bufLen: bigint,
+    indLenBuf: BufferSource,
+  ): void {
+    const status = this.#symbols.SQLBindCol(
+      stmtHandle,
+      i,
+      cType,
+      buf,
+      bufLen,
+      indLenBuf,
+    );
+
+    if (
+      status !== SQLRETURN.SQL_SUCCESS &&
+      status !== SQLRETURN.SQL_SUCCESS_WITH_INFO
+    ) {
+      throw new Error(
+        `SQLBindCol failed: ${
+          this.getOdbcError(
+            HandleType.SQL_HANDLE_STMT,
+            stmtHandle,
+          )
+        }\n`,
+      );
+    }
+  }
+
+  async fetch(
+    stmtHandle: Deno.PointerValue,
+  ): ReturnType<OdbcSymbols["SQLFetch"]> {
+    const status = await this.#symbols.SQLFetch(
+      stmtHandle,
+    );
+
+    if (status === SQLRETURN.SQL_ERROR) {
+      throw new Error(`SQLFetch failed: ${
+        this.getOdbcError(
+          HandleType.SQL_HANDLE_STMT,
+          stmtHandle,
+        )
+      }`);
+    }
+
+    return status;
+  }
+
+  async rollbackTransaction(
+    dbcHandle: Deno.PointerValue,
+  ): Promise<void> {
+    const status = await this.#symbols.SQLEndTran(
+      HandleType.SQL_HANDLE_DBC,
+      dbcHandle,
+      SQL_ROLLBACK,
+    );
+
+    if (
+      status !== SQLRETURN.SQL_SUCCESS &&
+      status !== SQLRETURN.SQL_SUCCESS_WITH_INFO
+    ) {
+      throw new Error(
+        `SQLEndTran failed: ${
+          this.getOdbcError(
+            HandleType.SQL_HANDLE_DBC,
+            dbcHandle,
+          )
+        }\n`,
+      );
+    }
+  }
+
+  close() {
+    this.#dylib.close();
+  }
 }
 
 interface OdbcSymbols {
@@ -465,541 +1028,7 @@ interface OdbcSymbols {
   >;
 }
 
-const dylib = Deno.dlopen(libPath, {
-  // --- ASYNC (I/O BOUND) ---
-  SQLDriverConnectW: {
-    parameters: [
-      "pointer", // SQLHDBC <- in
-      "pointer", // SQLHWND <- in
-      "buffer", // SQLWCHAR * <- in
-      "i16", // SQLSMALLINT -> out
-      "pointer", // SQLWCHAR * -> out (always NULL, so using pointer instead of buffer)
-      "i16", // SQLSMALLINT <- in
-      "pointer", // SQLSMALLINT * -> out (always NULL, so using pointer instead of buffer)
-      "u16", // SQLUSMALLINT <- in
-    ],
-    result: "i16", // SQLRETURN
-    nonblocking: true,
-  },
-  SQLDisconnect: {
-    parameters: [
-      "pointer", // SQLHDBC <- in
-    ],
-    result: "i16", // SQLRETURN
-    nonblocking: true,
-  },
-  SQLExecDirectW: {
-    parameters: [
-      "pointer", // SQLHSTMT <- in
-      "buffer", // SQLWCHAR * <- in
-      "i32", // SQLINTEGER -> out
-    ],
-    result: "i16", // SQLRETURN
-    nonblocking: true,
-  },
-  SQLFetch: {
-    parameters: [
-      "pointer", // SQLHSTMT <- in
-    ],
-    result: "i16",
-    nonblocking: true,
-  },
-  SQLEndTran: {
-    parameters: [
-      "u16", // SQLSMALLINT <- in
-      "pointer", // SQLHANDLE <- in
-      "u16", // SQLSMALLINT <- in
-    ],
-    result: "i16",
-    nonblocking: true,
-  },
-  // --- SYNC (MEMORY BOUND) ---
-  SQLAllocHandle: {
-    parameters: [
-      "i16", // SQLSMALLINT <- in
-      "pointer", // SQLHANDLE <- in
-      "buffer", // SQLHANDLE * -> out
-    ],
-    result: "i16", // SQLRETURN
-  },
-  SQLGetDiagRecW: {
-    parameters: [
-      "i16", // SQLSMALLINT <- in
-      "pointer", // SQLHANDLE <- in
-      "i16", // SQLSMALLINT <- in
-      "buffer", // SQLWCHAR * -> out
-      "buffer", // SQLINTEGER * -> out
-      "buffer", // SQLWCHAR * -> out
-      "i16", // SQLSMALLINT <- in
-      "buffer", // SQLSMALLINT * -> out
-    ],
-    result: "i16", // SQLRETURN
-  },
-  SQLFreeHandle: {
-    parameters: [
-      "i16", // HandleType <- in
-      "pointer", // SQLHANDLE <- in
-    ],
-    result: "i16", // SQLRETURN
-  },
-  SQLRowCount: {
-    parameters: [
-      "pointer", // SQLHSTMT <- in
-      "buffer", // SQLLEN * -> out
-    ],
-    result: "i16", // SQLRETURN
-  },
-  SQLBindParameter: {
-    parameters: [
-      "pointer", // SQLHSTMT <- in
-      "u16", // SQLUSMALLINT <- in
-      "i16", // SQLSMALLINT <- in
-      "i16", // SQLSMALLINT <- in
-      "i16", // SQLSMALLINT <- in
-      "u64", // SQLULEN <- in
-      "i16", // SQLSMALLINT <- in
-      "buffer", // SQLPOINTER <- in
-      "i64", // SQLLEN <- in
-      "buffer", // SQLLEN * <- in
-    ],
-    result: "i16", // SQLRETURN
-  },
-  SQLNumResultCols: {
-    parameters: [
-      "pointer", // SQLHSTMT <- in
-      "buffer", // SQLSMALLINT * -> out
-    ],
-    result: "i16", // SQLRETURN
-  },
-  SQLDescribeColW: {
-    parameters: [
-      "pointer", // SQLHSTMT <- in
-      "u16", // SQLUSMALLINT <- in
-      "buffer", // SQLCHAR * -> out
-      "i16", // SQLSMALLINT <- in
-      "buffer", // SQLSMALLINT * -> out
-      "buffer", // SQLSMALLINT * -> out
-      "buffer", // SQLULEN * -> out
-      "buffer", // SQLSMALLINT * -> out
-      "buffer", // SQLSMALLINT * -> out
-    ],
-    result: "i16", // SQLRETURN
-  },
-  SQLBindCol: {
-    parameters: [
-      "pointer", // SQLHSTMT <- in
-      "u16", // SQLUSMALLINT <- in
-      "i16", // SQLSMALLINT <- in
-      "buffer", // SQLPOINTER <- in
-      "i64", // SQLLEN <- in
-      "buffer", // SQLLEN * <- in
-    ],
-    result: "i16",
-  },
-});
-
-export const odbcLib = dylib.symbols as OdbcSymbols;
-
 const decoder = new TextDecoder("utf-16le");
-
-/**
- * Allocates a new ODBC handle of the specified type.
- *
- * This wrapper simplifies `SQLAllocHandle` by automatically creating the required
- * output buffer, checking the status code for errors, and converting the resulting
- * memory address into a usable `Deno.PointerValue` object.
- *
- * @param handleType The type of handle to allocate (e.g., `SQL_HANDLE_ENV`, `SQL_HANDLE_DBC`).
- * @param parentHandle The parent context for the new handle. Pass `null` if allocating an Environment (`ENV`) handle.
- * @returns Newly allocated handle pointer.
- * @throws If the ODBC call returns a non-success status (e.g., `SQL_ERROR`) or if the driver returns a null pointer.
- */
-export function allocHandle(
-  handleType: HandleType,
-  parentHandle: Deno.PointerValue,
-): Deno.PointerValue {
-  const outHandleBuf = new BigUint64Array(1);
-
-  const status = odbcLib.SQLAllocHandle(
-    handleType,
-    parentHandle,
-    outHandleBuf,
-  );
-
-  if (
-    status !== SQLRETURN.SQL_SUCCESS &&
-    status !== SQLRETURN.SQL_SUCCESS_WITH_INFO
-  ) {
-    throw new Error(`SQLAllocHandle failed: ${SQLRETURN[status]}`);
-  }
-
-  const handleAddress = outHandleBuf[0];
-  if (handleAddress === 0n) {
-    throw new Error(
-      `SQLAllocHandle returned invalid (null) handle (Type: ${
-        HandleType[handleType]
-      })`,
-    );
-  }
-
-  return Deno.UnsafePointer.create(handleAddress);
-}
-
-/**
- * Establishes a connection to a driver and a data source using a connection string.
- *
- * This function wraps `SQLDriverConnectW`. It uses `SQL_DRIVER_NOPROMPT`, meaning
- * the connection string must contain all necessary information (DSN, User, Password, etc.)
- * to connect without user interaction. If the string is insufficient, the connection
- * will fail rather than prompting the user with a dialog.
- *
- * @param connStr The full connection string (e.g., `"driver={ODBC Driver 18 for SQL Server};server=127.0.0.1;uid=sa;pwd=Test123$;encrypt=yes;trustServerCertificate=yes;"`.
- * @param dbcHandle A valid Connection Handle allocated via `SQLAllocHandle`.
- * @throws If the connection fails. The error message will contain the specific SQL state and diagnostic message retrieved from the driver.
- * @returns Resolves when the connection is successfully established.
- */
-export async function driverConnect(
-  connStr: string,
-  dbcHandle: Deno.PointerValue,
-): Promise<void> {
-  const connStrEncoded = strToBuf(connStr);
-
-  const ret = await odbcLib.SQLDriverConnectW(
-    dbcHandle,
-    null,
-    connStrEncoded,
-    SQL_NTS,
-    null,
-    0,
-    null,
-    SQL_DRIVER_NOPROMPT,
-  );
-
-  if (
-    ret !== SQLRETURN.SQL_SUCCESS &&
-    ret !== SQLRETURN.SQL_SUCCESS_WITH_INFO
-  ) {
-    const errorDetail = getOdbcError(
-      HandleType.SQL_HANDLE_DBC,
-      dbcHandle,
-    );
-    throw new Error(`ODBC Connection Failed:\n${errorDetail}`);
-  }
-}
-
-/**
- * Executes a SQL statement directly without prior preparation.
- *
- * This function wraps `SQLExecDirectW`. It is the fastest way to execute a statement once.
- *
- * @param rawSql The SQL statement to execute.
- * @param stmtHandle A valid Statement Handle.
- * @throws If execution fails. The error includes the specific ODBC diagnostic message and the SQL that caused the failure.
- * @returns Resolves to number of columns in the result set
- */
-export async function execDirect(
-  rawSql: string,
-  stmtHandle: Deno.PointerValue,
-): Promise<{ colCount: number; numAffectedRows: bigint }> {
-  const rawSqlEncoded = strToBuf(rawSql);
-  const ret = await odbcLib.SQLExecDirectW(stmtHandle, rawSqlEncoded, SQL_NTS);
-
-  if (
-    ret !== SQLRETURN.SQL_SUCCESS &&
-    ret !== SQLRETURN.SQL_SUCCESS_WITH_INFO &&
-    ret !== SQLRETURN.SQL_NO_DATA
-  ) {
-    throw new Error(
-      `Execution Error: ${
-        getOdbcError(
-          HandleType.SQL_HANDLE_STMT,
-          stmtHandle,
-        )
-      }\nSQL: ${rawSql}`,
-    );
-  }
-
-  return {
-    colCount: numResultCols(stmtHandle),
-    numAffectedRows: rowCount(stmtHandle),
-  };
-}
-
-/**
- * Returns the number of rows affected by an `UPDATE`, `INSERT`, or `DELETE` statement.
- *
- * @param stmtHandle The statement handle (HSTMT) on which the operation was performed.
- * @returns The count of affected rows.
- * @throws If the API call fails.
- */
-export function rowCount(stmtHandle: Deno.PointerValue): bigint {
-  const rowCountBuf = new BigInt64Array(1);
-
-  const status = odbcLib.SQLRowCount(
-    stmtHandle,
-    rowCountBuf,
-  );
-
-  if (
-    status !== SQLRETURN.SQL_SUCCESS &&
-    status !== SQLRETURN.SQL_SUCCESS_WITH_INFO
-  ) {
-    throw new Error(`SQLRowCount failed: ${SQLRETURN[status]}`);
-  }
-
-  return rowCountBuf[0];
-}
-
-/**
- * Retrieves all diagnostic records (errors and warnings) associated with a specific handle.
- *
- * This function loops through available diagnostic records (`SQLGetDiagRecW`) until `SQL_NO_DATA` is returned. It captures the SQL State, Native Error Code, and the human-readable Message Text for each record.
- *
- * @param handleType The type of handle (e.g., `SQL_HANDLE_ENV`, `SQL_HANDLE_DBC`, `SQL_HANDLE_STMT`).
- * @param handle The pointer to the handle to inspect.
- * @returns A single string containing all error messages joined by newlines. Returns `"Unknown ODBC Error"` if no records are found.
- */
-export function getOdbcError(
-  handleType: HandleType,
-  handle: Deno.PointerValue,
-): string {
-  const errors: string[] = [];
-  let i = 1;
-
-  while (true) {
-    const stateBuf = new Uint16Array(6);
-    const nativeErrBuf = new Int32Array(1);
-    const msgBuf = new Uint16Array(512);
-    const msgLenBuf = new Int16Array(1);
-
-    const status = odbcLib.SQLGetDiagRecW(
-      handleType,
-      handle,
-      i,
-      stateBuf,
-      nativeErrBuf,
-      msgBuf,
-      msgBuf.length,
-      msgLenBuf,
-    );
-
-    if (status === SQLRETURN.SQL_NO_DATA) break;
-
-    const state = bufToStr(stateBuf, 5);
-    const msg = bufToStr(msgBuf, msgLenBuf[0]);
-
-    errors.push(`[${state}] ${msg} (Code: ${nativeErrBuf[0]})`);
-    i++;
-  }
-
-  return errors.length > 0 ? errors.join("\n") : "Unknown ODBC Error";
-}
-
-/**
- * Wrapper for `SQLBindParameter` that binds a buffer to a parameter marker in the SQL statement.
- *
- * @param stmtHandle Statement handle.
- * @param i The parameter index number (ordered sequentially starting at 1).
- * @param cType The C data type identifier (e.g., `SQL_C_SLONG`, `SQL_C_WCHAR`) describing the format of `buf`.
- * @param sqlType The SQL data type identifier (e.g., `SQL_INTEGER`, `SQL_WVARCHAR`) describing the destination column.
- * @param columnSize The precision or column size of the corresponding parameter marker. **Ignored for fixed-width types like Integer/Float; required for Strings/Decimals**.
- * @param decimalDigits The decimal digits (scale) of the corresponding parameter marker.
- * @param buf The buffer containing the actual parameter data.
- * @param bufLen The length of the `buf` buffer in bytes.
- * @param indLenBuf A pointer to a buffer (usually `BigInt64Array`) containing the data length or null indicator.
- * @returns Resolves if binding is successful.
- * @throws Throws a detailed ODBC error message if `SQLBindParameter` fails.
- */
-export function bindParameter(
-  stmtHandle: Deno.PointerValue,
-  i: number,
-  cType: ValueType,
-  sqlType: ParameterType,
-  columnSize: bigint,
-  decimalDigits: number,
-  buf: BufferSource,
-  bufLen: bigint,
-  indLenBuf: BufferSource,
-): void {
-  const status = odbcLib.SQLBindParameter(
-    stmtHandle,
-    i,
-    SQL_PARAM_INPUT,
-    cType,
-    sqlType,
-    columnSize,
-    decimalDigits,
-    buf,
-    bufLen,
-    indLenBuf,
-  );
-
-  if (
-    status !== SQLRETURN.SQL_SUCCESS &&
-    status !== SQLRETURN.SQL_SUCCESS_WITH_INFO
-  ) {
-    throw new Error(
-      `SQLBindParameter failed: ${
-        getOdbcError(
-          HandleType.SQL_HANDLE_STMT,
-          stmtHandle,
-        )
-      }\n`,
-    );
-  }
-}
-
-/**
- * Wrapper for `SQLNumResultCols` that returns the number of columns in the result set for a prepared or executed statement.
- *
- * @param stmtHandle The handle to the statement.
- * @returns A promise that resolves to the number of columns in the result set.
- * @throws If the ODBC function call fails
- */
-export function numResultCols(
-  stmtHandle: Deno.PointerValue,
-): number {
-  const colCountBuf = new Int16Array(1);
-
-  const status = odbcLib.SQLNumResultCols(
-    stmtHandle,
-    colCountBuf,
-  );
-
-  if (
-    status !== SQLRETURN.SQL_SUCCESS &&
-    status !== SQLRETURN.SQL_SUCCESS_WITH_INFO
-  ) {
-    throw new Error(`SQLNumResultCols failed: ${SQLRETURN[status]}`);
-  }
-
-  return colCountBuf[0];
-}
-
-export function describeCol(
-  stmtHandle: Deno.PointerValue,
-  colNumber: number,
-) {
-  const CHAR_LIMIT = 256;
-
-  const nameBuf = new Uint16Array(CHAR_LIMIT);
-  const nameLenIndBuf = new Int16Array(1);
-  const dataTypeBuf = new Int16Array(1);
-  const columnSizeBuf = new BigUint64Array(1);
-  const decimalDigitsBuf = new Int16Array(1);
-  const nullableBuf = new Int16Array(1);
-
-  const status = odbcLib.SQLDescribeColW(
-    stmtHandle,
-    colNumber,
-    nameBuf,
-    CHAR_LIMIT,
-    nameLenIndBuf,
-    dataTypeBuf,
-    columnSizeBuf,
-    decimalDigitsBuf,
-    nullableBuf,
-  );
-
-  if (
-    status !== SQLRETURN.SQL_SUCCESS &&
-    status !== SQLRETURN.SQL_SUCCESS_WITH_INFO
-  ) {
-    throw new Error(
-      `SQLDescribeColW failed: ${
-        getOdbcError(
-          HandleType.SQL_HANDLE_STMT,
-          stmtHandle,
-        )
-      }\n`,
-    );
-  }
-
-  const name = bufToStr(nameBuf, nameLenIndBuf[0]);
-
-  return {
-    name,
-    dataType: dataTypeBuf[0],
-    columnSize: columnSizeBuf[0],
-    decimalDigits: decimalDigitsBuf[0],
-    isNullable: nullableBuf[0] === 1,
-  };
-}
-
-export function bindCol(
-  stmtHandle: Deno.PointerValue,
-  i: number,
-  cType: ValueType,
-  buf: BufferSource,
-  bufLen: bigint,
-  indLenBuf: BufferSource,
-): void {
-  const status = odbcLib.SQLBindCol(
-    stmtHandle,
-    i,
-    cType,
-    buf,
-    bufLen,
-    indLenBuf,
-  );
-
-  if (
-    status !== SQLRETURN.SQL_SUCCESS &&
-    status !== SQLRETURN.SQL_SUCCESS_WITH_INFO
-  ) {
-    throw new Error(
-      `SQLBindCol failed: ${
-        getOdbcError(
-          HandleType.SQL_HANDLE_STMT,
-          stmtHandle,
-        )
-      }\n`,
-    );
-  }
-}
-
-export async function fetch(
-  stmtHandle: Deno.PointerValue,
-): ReturnType<OdbcSymbols["SQLFetch"]> {
-  const status = await odbcLib.SQLFetch(
-    stmtHandle,
-  );
-
-  if (status === SQLRETURN.SQL_ERROR) {
-    throw new Error(`SQLFetch failed: ${
-      getOdbcError(
-        HandleType.SQL_HANDLE_STMT,
-        stmtHandle,
-      )
-    }`);
-  }
-
-  return status;
-}
-
-export async function rollbackTransaction(
-  dbcHandle: Deno.PointerValue,
-): Promise<void> {
-  const status = await odbcLib.SQLEndTran(
-    HandleType.SQL_HANDLE_DBC,
-    dbcHandle,
-    SQL_ROLLBACK,
-  );
-
-  if (
-    status !== SQLRETURN.SQL_SUCCESS &&
-    status !== SQLRETURN.SQL_SUCCESS_WITH_INFO
-  ) {
-    throw new Error(
-      `SQLEndTran failed: ${
-        getOdbcError(
-          HandleType.SQL_HANDLE_DBC,
-          dbcHandle,
-        )
-      }\n`,
-    );
-  }
-}
 
 /**
  * Encodes a JavaScript string into a Null-Terminated UTF-16LE buffer.

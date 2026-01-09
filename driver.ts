@@ -7,7 +7,7 @@ import {
   MssqlDialectConfig,
   TransactionSettings,
 } from "@kysely/kysely";
-import { allocHandle, HandleType, odbcLib } from "./ffi.ts";
+import { HandleType, OdbcLib } from "./odbc.ts";
 import { OdbcConnection } from "./connection.ts";
 
 export interface OdbcDialectConfig
@@ -22,17 +22,20 @@ export interface OdbcDialectConfig
 }
 
 export interface Odbc {
+  libPath: string;
   connectionString: string;
 }
 
 export class OdbcDriver implements Driver {
   readonly #config: OdbcDialectConfig;
   readonly #pool: Pool<OdbcConnection>;
+  readonly #odbcLib: OdbcLib;
 
   #envHandle: Deno.PointerValue = null;
 
   constructor(config: OdbcDialectConfig) {
     this.#config = Object.freeze({ ...config });
+    this.#odbcLib = new OdbcLib(this.#config.odbc.libPath);
 
     this.#pool = new Pool({
       ...this.#config.tarn.options,
@@ -41,6 +44,7 @@ export class OdbcDriver implements Driver {
           throw new Error("Driver not initialized: envHandle is missing");
         }
         const connection = new OdbcConnection(
+          this.#odbcLib,
           this.#config.odbc.connectionString,
           this.#envHandle,
         );
@@ -59,7 +63,10 @@ export class OdbcDriver implements Driver {
   }
 
   async init(): Promise<void> {
-    this.#envHandle = allocHandle(HandleType.SQL_HANDLE_ENV, null);
+    this.#envHandle = this.#odbcLib.allocHandle(
+      HandleType.SQL_HANDLE_ENV,
+      null,
+    );
   }
 
   async acquireConnection(): Promise<DatabaseConnection> {
@@ -97,7 +104,9 @@ export class OdbcDriver implements Driver {
 
     if (this.#envHandle === null) return;
 
-    odbcLib.SQLFreeHandle(HandleType.SQL_HANDLE_ENV, this.#envHandle);
+    this.#odbcLib.freeHandle(HandleType.SQL_HANDLE_ENV, this.#envHandle);
     this.#envHandle = null;
+
+    this.#odbcLib.close();
   }
 }
