@@ -62,6 +62,7 @@ export class OdbcDriver implements Driver {
     });
   }
 
+  // deno-lint-ignore require-await
   async init(): Promise<void> {
     this.#envHandle = this.#odbcLib.allocHandle(
       HandleType.SQL_HANDLE_ENV,

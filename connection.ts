@@ -78,6 +78,7 @@ export class OdbcConnection implements DatabaseConnection {
     yield* request.stream(chunkSize);
   }
 
+  //deno-lint-ignore no-unused-vars
   async beginTransaction(settings: TransactionSettings): Promise<void> {}
 
   async commitTransaction(): Promise<void> {}
