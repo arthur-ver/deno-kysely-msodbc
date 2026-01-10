@@ -79,11 +79,11 @@ export class OdbcConnection implements DatabaseConnection {
   }
 
   //deno-lint-ignore no-unused-vars
-  async beginTransaction(settings: TransactionSettings): Promise<void> {}
+  async beginTransaction(settings: TransactionSettings): Promise<void> {} // TODO: implement this
 
-  async commitTransaction(): Promise<void> {}
+  async commitTransaction(): Promise<void> {} // TODO: implement this
 
-  async rollbackTransaction(): Promise<void> {}
+  async rollbackTransaction(): Promise<void> {} // TODO: implement this
 
   async destroy(): Promise<void> {
     if (this.#dbcHandle === null) return;

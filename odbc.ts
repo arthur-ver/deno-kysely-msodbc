@@ -1,12 +1,12 @@
 export enum HandleType {
-  // found in sql.h
+  // sql.h
   SQL_HANDLE_ENV = 1,
   SQL_HANDLE_DBC = 2,
   SQL_HANDLE_STMT = 3,
 }
 
 export enum SQLRETURN {
-  // found in sql.h
+  // sql.h
   SQL_SUCCESS = 0,
   SQL_SUCCESS_WITH_INFO = 1,
   SQL_NO_DATA = 100,
@@ -17,42 +17,47 @@ export enum SQLRETURN {
   SQL_PARAM_DATA_AVAILABLE = 101,
 }
 
-export enum ValueType {
-  SQL_C_CHAR = 1,
-  SQL_C_DOUBLE = 8,
-  SQL_C_BIT = -7,
-  SQL_C_BINARY = -2,
-  SQL_C_WCHAR = -8,
-  // found in sqlext.h
-  SQL_C_SLONG = -16,
-  SQL_C_SBIGINT = -25,
-  SQL_C_UTINYINT = -28,
-  SQL_C_SSHORT = -15,
-  SQL_C_TYPE_TIMESTAMP = 93,
-}
+const SQL_SIGNED_OFFSET = -20;
+const SQL_UNSIGNED_OFFSET = -22;
 
-export enum ParameterType {
+export enum SQLType {
+  // sql.h
   SQL_NUMERIC = 2,
   SQL_DECIMAL = 3,
   SQL_CHAR = 1,
   SQL_INTEGER = 4,
   SQL_BIGINT = -5,
   SQL_FLOAT = 6,
-  SQL_BIT = ValueType.SQL_C_BIT,
+  SQL_BIT = -7,
   SQL_VARCHAR = 12,
   SQL_LONGVARCHAR = -1,
   SQL_TYPE_DATE = 91,
   SQL_TYPE_TIMESTAMP = 93,
-  // found in sqlucode.h
+  // sqlucode.h
   SQL_WCHAR = -8,
   SQL_WVARCHAR = -9,
   SQL_WLONGVARCHAR = -10,
-  // found in sqlext.h
+  // sqlext.h
   SQL_BINARY = -2,
   SQL_VARBINARY = -3,
   SQL_LONGVARBINARY = -4,
   SQL_TINYINT = -6,
   SQL_SMALLINT = 5,
+}
+
+export enum CType {
+  // sqlext.h
+  SQL_C_CHAR = SQLType.SQL_CHAR,
+  SQL_C_DOUBLE = 8,
+  SQL_C_BIT = SQLType.SQL_BIT,
+  SQL_C_BINARY = SQLType.SQL_BINARY,
+  SQL_C_SLONG = -16,
+  SQL_C_SBIGINT = SQLType.SQL_BIGINT + SQL_SIGNED_OFFSET,
+  SQL_C_UTINYINT = SQLType.SQL_TINYINT + SQL_UNSIGNED_OFFSET,
+  SQL_C_SSHORT = SQLType.SQL_SMALLINT + SQL_SIGNED_OFFSET,
+  SQL_C_TYPE_TIMESTAMP = SQLType.SQL_TYPE_TIMESTAMP,
+  // sqlucode.h
+  SQL_C_WCHAR = SQLType.SQL_WCHAR,
 }
 
 export const SQL_PARAM_INPUT = 1;
@@ -449,8 +454,8 @@ export class OdbcLib {
   bindParameter(
     stmtHandle: Deno.PointerValue,
     i: number,
-    cType: ValueType,
-    sqlType: ParameterType,
+    cType: CType,
+    sqlType: SQLType,
     columnSize: bigint,
     decimalDigits: number,
     buf: BufferSource,
@@ -565,7 +570,7 @@ export class OdbcLib {
   bindCol(
     stmtHandle: Deno.PointerValue,
     i: number,
-    cType: ValueType,
+    cType: CType,
     buf: BufferSource,
     bufLen: bigint,
     indLenBuf: BufferSource,
@@ -870,8 +875,8 @@ interface OdbcSymbols {
     statementHandle: Deno.PointerValue,
     parameterNumber: number,
     inputOutputType: number,
-    valueType: ValueType,
-    parameterType: ParameterType,
+    valueType: CType,
+    parameterType: SQLType,
     columnSize: bigint,
     decimalDigits: number,
     parameterValuePtr: BufferSource,

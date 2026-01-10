@@ -1,20 +1,20 @@
 import { CompiledQuery, QueryResult } from "@kysely/kysely";
 import {
   bufToStr,
+  CType,
   HandleType,
   type OdbcLib,
-  ParameterType,
   SQL_NTS,
   SQL_NULL_DATA,
   SQLRETURN,
+  SQLType,
   strToBuf,
-  ValueType,
 } from "./odbc.ts";
 
 const MAX_BIND_SIZE = 65536n; // 64kb
 
 type ColBinding = {
-  cType: ValueType;
+  cType: CType;
   buf:
     | Uint8Array<ArrayBuffer>
     | Int16Array<ArrayBuffer>
@@ -27,8 +27,8 @@ type ColBinding = {
 };
 
 type ParamBinding = {
-  cType: ValueType;
-  sqlType: ParameterType;
+  cType: CType;
+  sqlType: SQLType;
   buf:
     | Int32Array<ArrayBuffer>
     | BigInt64Array<ArrayBuffer>
@@ -168,7 +168,7 @@ export class OdbcRequest<R> {
       const desc = this.#odbcLib.describeCol(this.#stmtHandle, i);
 
       let allocSize = desc.columnSize;
-      if (allocSize === 0n || allocSize > MAX_BIND_SIZE) {
+      if (allocSize === 0n || allocSize > MAX_BIND_SIZE) { // TODO: for MAX, use SQLGetData
         allocSize = MAX_BIND_SIZE;
       }
 
@@ -190,8 +190,8 @@ export class OdbcRequest<R> {
     // NULL
     if (val === null || typeof val === "undefined" || val === undefined) {
       return {
-        cType: ValueType.SQL_C_CHAR, // dummy
-        sqlType: ParameterType.SQL_CHAR, // dummy
+        cType: CType.SQL_C_CHAR, // dummy
+        sqlType: SQLType.SQL_CHAR, // dummy
         buf: new Uint8Array(),
         columnSize: 0n,
         decimalDigits: 0,
@@ -208,8 +208,8 @@ export class OdbcRequest<R> {
       if (val >= -2147483648 && val <= 2147483647) {
         const bufLen = 4n;
         return {
-          cType: ValueType.SQL_C_SLONG,
-          sqlType: ParameterType.SQL_INTEGER,
+          cType: CType.SQL_C_SLONG,
+          sqlType: SQLType.SQL_INTEGER,
           buf: new Int32Array([Number(val)]),
           columnSize: 0n, // ignored by SQLBindParameter for this data type
           decimalDigits: 0, // ignored by SQLBindParameter for this data type
@@ -220,8 +220,8 @@ export class OdbcRequest<R> {
         // 64-bit integer (BigInt)
         const bufLen = 8n;
         return {
-          cType: ValueType.SQL_C_SBIGINT,
-          sqlType: ParameterType.SQL_BIGINT,
+          cType: CType.SQL_C_SBIGINT,
+          sqlType: SQLType.SQL_BIGINT,
           buf: new BigInt64Array([BigInt(val)]),
           columnSize: 0n, // ignored by SQLBindParameter for this data type
           decimalDigits: 0, // ignored by SQLBindParameter for this data type
@@ -234,8 +234,8 @@ export class OdbcRequest<R> {
     if (typeof val === "number") {
       const bufLen = 8n;
       return {
-        cType: ValueType.SQL_C_DOUBLE,
-        sqlType: ParameterType.SQL_FLOAT,
+        cType: CType.SQL_C_DOUBLE,
+        sqlType: SQLType.SQL_FLOAT,
         buf: new Float64Array([val]),
         columnSize: 0n, // ignored by SQLBindParameter for this data type
         decimalDigits: 0, // ignored by SQLBindParameter for this data type
@@ -247,8 +247,8 @@ export class OdbcRequest<R> {
     if (typeof val === "boolean") {
       const bufLen = 1n;
       return {
-        cType: ValueType.SQL_C_BIT,
-        sqlType: ParameterType.SQL_BIT,
+        cType: CType.SQL_C_BIT,
+        sqlType: SQLType.SQL_BIT,
         buf: new Uint8Array([val ? 1 : 0]),
         columnSize: 0n, // ignored by SQLBindParameter for this data type
         decimalDigits: 0, // ignored by SQLBindParameter for this data type
@@ -261,8 +261,8 @@ export class OdbcRequest<R> {
       const charLength = val.length;
       const bufLen = (charLength + 1) * 2;
       return {
-        cType: ValueType.SQL_C_WCHAR,
-        sqlType: ParameterType.SQL_WVARCHAR,
+        cType: CType.SQL_C_WCHAR,
+        sqlType: SQLType.SQL_WVARCHAR,
         buf: strToBuf(val),
         columnSize: BigInt(charLength), // charLength
         decimalDigits: 0, // ignored by SQLBindParameter for this data type
@@ -275,8 +275,8 @@ export class OdbcRequest<R> {
       const buf = new Uint8Array(val.buffer, val.byteOffset, val.byteLength);
       const bufLen = BigInt(buf.byteLength);
       return {
-        cType: ValueType.SQL_C_BINARY,
-        sqlType: ParameterType.SQL_VARBINARY,
+        cType: CType.SQL_C_BINARY,
+        sqlType: SQLType.SQL_VARBINARY,
         buf: buf as unknown as Uint8Array<ArrayBuffer>,
         columnSize: bufLen,
         decimalDigits: 0,
@@ -303,8 +303,8 @@ export class OdbcRequest<R> {
       const bufLen = 16n;
 
       return {
-        cType: ValueType.SQL_C_TYPE_TIMESTAMP,
-        sqlType: ParameterType.SQL_TYPE_TIMESTAMP,
+        cType: CType.SQL_C_TYPE_TIMESTAMP,
+        sqlType: SQLType.SQL_TYPE_TIMESTAMP,
         buf,
         columnSize: 27n,
         decimalDigits: 7,
@@ -319,36 +319,36 @@ export class OdbcRequest<R> {
   #getColBinding(dataType: number, columnSize: bigint): ColBinding {
     const createInd = () => new BigInt64Array(1);
 
-    if (dataType === ParameterType.SQL_INTEGER) {
+    if (dataType === SQLType.SQL_INTEGER) {
       return {
-        cType: ValueType.SQL_C_SLONG,
+        cType: CType.SQL_C_SLONG,
         buf: new Int32Array(1),
         bufLen: 4n,
         lenIndBuf: createInd(),
       };
     }
 
-    if (dataType === ParameterType.SQL_BIGINT) {
+    if (dataType === SQLType.SQL_BIGINT) {
       return {
-        cType: ValueType.SQL_C_SBIGINT,
+        cType: CType.SQL_C_SBIGINT,
         buf: new BigInt64Array(1),
         bufLen: 8n,
         lenIndBuf: createInd(),
       };
     }
 
-    if (dataType === ParameterType.SQL_TINYINT) {
+    if (dataType === SQLType.SQL_TINYINT) {
       return {
-        cType: ValueType.SQL_C_UTINYINT,
+        cType: CType.SQL_C_UTINYINT,
         buf: new Uint8Array(1),
         bufLen: 1n,
         lenIndBuf: createInd(),
       };
     }
 
-    if (dataType === ParameterType.SQL_SMALLINT) {
+    if (dataType === SQLType.SQL_SMALLINT) {
       return {
-        cType: ValueType.SQL_C_SSHORT,
+        cType: CType.SQL_C_SSHORT,
         buf: new Int16Array(1),
         bufLen: 2n,
         lenIndBuf: createInd(),
@@ -357,30 +357,30 @@ export class OdbcRequest<R> {
 
     // Safest way is to bind SQL_NUMERIC and SQL_DECIMAL as strings since JS could loose precision when treating these as numbers
     if (
-      dataType === ParameterType.SQL_NUMERIC ||
-      dataType === ParameterType.SQL_DECIMAL
+      dataType === SQLType.SQL_NUMERIC ||
+      dataType === SQLType.SQL_DECIMAL
     ) {
       const len = Number(columnSize) + 4;
       return {
-        cType: ValueType.SQL_C_WCHAR,
+        cType: CType.SQL_C_WCHAR,
         buf: new Uint16Array(len),
         bufLen: BigInt(len * 2),
         lenIndBuf: createInd(),
       };
     }
 
-    if (dataType === ParameterType.SQL_FLOAT) {
+    if (dataType === SQLType.SQL_FLOAT) {
       return {
-        cType: ValueType.SQL_C_DOUBLE,
+        cType: CType.SQL_C_DOUBLE,
         buf: new Float64Array(1),
         bufLen: 8n,
         lenIndBuf: createInd(),
       };
     }
 
-    if (dataType === ParameterType.SQL_BIT) {
+    if (dataType === SQLType.SQL_BIT) {
       return {
-        cType: ValueType.SQL_C_BIT,
+        cType: CType.SQL_C_BIT,
         buf: new Uint8Array(1),
         bufLen: 1n,
         lenIndBuf: createInd(),
@@ -388,13 +388,13 @@ export class OdbcRequest<R> {
     }
 
     if (
-      dataType === ParameterType.SQL_BINARY ||
-      dataType === ParameterType.SQL_VARBINARY ||
-      dataType === ParameterType.SQL_LONGVARBINARY
+      dataType === SQLType.SQL_BINARY ||
+      dataType === SQLType.SQL_VARBINARY ||
+      dataType === SQLType.SQL_LONGVARBINARY
     ) {
       const len = Number(columnSize);
       return {
-        cType: ValueType.SQL_C_BINARY,
+        cType: CType.SQL_C_BINARY,
         buf: new Uint8Array(len),
         bufLen: BigInt(len),
         lenIndBuf: createInd(),
@@ -402,16 +402,16 @@ export class OdbcRequest<R> {
     }
 
     if (
-      dataType === ParameterType.SQL_CHAR ||
-      dataType === ParameterType.SQL_VARCHAR ||
-      dataType === ParameterType.SQL_LONGVARCHAR ||
-      dataType === ParameterType.SQL_WCHAR ||
-      dataType === ParameterType.SQL_WVARCHAR ||
-      dataType === ParameterType.SQL_WLONGVARCHAR
+      dataType === SQLType.SQL_CHAR ||
+      dataType === SQLType.SQL_VARCHAR ||
+      dataType === SQLType.SQL_LONGVARCHAR ||
+      dataType === SQLType.SQL_WCHAR ||
+      dataType === SQLType.SQL_WVARCHAR ||
+      dataType === SQLType.SQL_WLONGVARCHAR
     ) {
       const len = Number(columnSize) + 1; // +1 for null terminator
       return {
-        cType: ValueType.SQL_C_WCHAR,
+        cType: CType.SQL_C_WCHAR,
         buf: new Uint16Array(len),
         bufLen: BigInt(len * 2),
         lenIndBuf: createInd(),
@@ -419,12 +419,12 @@ export class OdbcRequest<R> {
     }
 
     if (
-      dataType === ParameterType.SQL_TYPE_TIMESTAMP ||
-      dataType === ParameterType.SQL_TYPE_DATE
+      dataType === SQLType.SQL_TYPE_TIMESTAMP ||
+      dataType === SQLType.SQL_TYPE_DATE
     ) {
       const len = 50; // Sufficient for "YYYY-MM-DD HH:MM:SS.FFF..."
       return {
-        cType: ValueType.SQL_C_WCHAR,
+        cType: CType.SQL_C_WCHAR,
         buf: new Uint16Array(len),
         bufLen: BigInt(len * 2),
         lenIndBuf: createInd(),
@@ -447,25 +447,27 @@ export class OdbcRequest<R> {
 
       let value: number | string | bigint | boolean | Uint8Array;
       switch (cType) {
-        case ValueType.SQL_C_SLONG:
-        case ValueType.SQL_C_SBIGINT:
-        case ValueType.SQL_C_DOUBLE:
-        case ValueType.SQL_C_UTINYINT:
-        case ValueType.SQL_C_SSHORT:
+        case CType.SQL_C_SLONG:
+        case CType.SQL_C_SBIGINT:
+        case CType.SQL_C_DOUBLE:
+        case CType.SQL_C_UTINYINT:
+        case CType.SQL_C_SSHORT:
           value = buf[0];
           break;
 
-        case ValueType.SQL_C_BIT:
+        case CType.SQL_C_BIT:
           value = buf[0] === 1;
           break;
 
-        case ValueType.SQL_C_BINARY:
+        case CType.SQL_C_BINARY:
           value = (buf as Uint8Array).slice(0, byteLen);
           break;
 
-        case ValueType.SQL_C_WCHAR:
+        case CType.SQL_C_WCHAR:
           value = bufToStr(buf as Uint16Array, byteLen / 2);
           break;
+
+        // TODO: implement str -> Date conversion
 
         default:
           throw new Error(`Unknown binding C-Type: ${cType}`);
