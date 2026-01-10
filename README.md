@@ -57,27 +57,43 @@ const db = new Kysely()<Database>({ dialect });
 
 > **Note:** `--allow-ffi` permission is required.
 
-## Supported SQL Data Types
+## Supported Data Types
 
-The following table details how SQL column types are mapped to JavaScript
-values.
+> [!IMPORTANT]
+> Any SQL type not listed above will throw an `Unsupported SQL dataType` error.
+> It is your responsibility to check the data types you are sending or
+> retrieving!
 
-| SQL Type                                                                                | Internal Binding | JavaScript Type | Notes                                            |
-| :-------------------------------------------------------------------------------------- | :--------------- | :-------------- | :----------------------------------------------- |
-| **`SQL_INTEGER`**                                                                       | `SQL_C_SLONG`    | `number`        | 32-bit signed integer.                           |
-| **`SQL_BIGINT`**                                                                        | `SQL_C_SBIGINT`  | `bigint`        | 64-bit signed integer.                           |
-| **`SQL_SMALLINT`**                                                                      | `SQL_C_SSHORT`   | `number`        | 16-bit signed integer.                           |
-| **`SQL_TINYINT`**                                                                       | `SQL_C_UTINYINT` | `number`        | 8-bit **unsigned** integer (0-255).              |
-| **`SQL_FLOAT`**                                                                         | `SQL_C_DOUBLE`   | `number`        | Double-precision floating point.                 |
-| **`SQL_NUMERIC`, `SQL_DECIMAL`**                                                        | `SQL_C_WCHAR`    | `string`        | Fetched as strings to preserve full precision.   |
-| **`SQL_BIT`**                                                                           | `SQL_C_BIT`      | `boolean`       | `1` becomes `true`, `0` becomes `false`.         |
-| **`SQL_BINARY`, `VARBINARY`, `LONGVARBINARY`**                                          | `SQL_C_BINARY`   | `Uint8Array`    | Returns a copy of the raw binary bytes.          |
-| **`SQL_CHAR`, `VARCHAR`, `LONGVARCHAR`**<br>**`SQL_WCHAR`, `WVARCHAR`, `WLONGVARCHAR`** | `SQL_C_WCHAR`    | `string`        | All text types are normalized to UTF-16 strings. |
-| **`SQL_TYPE_DATE`, `TIMESTAMP`**                                                        | `SQL_C_WCHAR`    | `string`        | Fetched as text strings (ISO format).            |
-| **`NULL`**                                                                              | _N/A_            | `null`          |                                                  |
+### Parameters (Input)
 
-> **Note:** Any SQL type not listed above will throw an
-> `Unsupported SQL dataType` error.
+JavaScript parameter types are mapped to the following SQL types:
+
+| JS Input                             | ODBC C Type            | Mapped SQL Type  | Notes                                                     |
+| :----------------------------------- | :--------------------- | :--------------- | :-------------------------------------------------------- |
+| **`null` / `undefined`**             | -                      | -                | Inserted as `NULL`                                        |
+| **`boolean`**                        | `SQL_C_BIT`            | `BIT`            | -                                                         |
+| **`number` (Int32)**                 | `SQL_C_SLONG`          | `INTEGER`        | -                                                         |
+| **`bigint` / `number` (Int64)**      | `SQL_C_SBIGINT`        | `BIGINT`         | -                                                         |
+| **`number` (Float)**                 | `SQL_C_DOUBLE`         | `FLOAT`          | -                                                         |
+| **`string`**                         | `SQL_C_WCHAR`          | `WVARCHAR`       | Converted to UTF-16                                       |
+| **`Date`**                           | `SQL_C_TYPE_TIMESTAMP` | `TYPE_TIMESTAMP` | Sent as UTC struct. Maps to `DATETIME2` (100ns precision) |
+| **`Uint8Array` / `ArrayBufferView`** | `SQL_C_BINARY`         | `VARBINARY`      | -                                                         |
+
+### Retrieval (Output)
+
+| SQL Type                                                                            | ODBC C Type      | Mapped JS Type | Notes                                            |
+| :---------------------------------------------------------------------------------- | :--------------- | :------------- | :----------------------------------------------- |
+| **`NULL`**                                                                          | -                | `null`         | -                                                |
+| **`BIT`**                                                                           | `SQL_C_BIT`      | `boolean`      | -                                                |
+| **`INTEGER`**                                                                       | `SQL_C_SLONG`    | `number`       | 32-bit signed integer.                           |
+| **`BIGINT`**                                                                        | `SQL_C_SBIGINT`  | `bigint`       | 64-bit signed integer.                           |
+| **`SMALLINT`**                                                                      | `SQL_C_SSHORT`   | `number`       | 16-bit signed integer.                           |
+| **`TINYINT`**                                                                       | `SQL_C_UTINYINT` | `number`       | 8-bit **unsigned** integer (0-255).              |
+| **`FLOAT`**                                                                         | `SQL_C_DOUBLE`   | `number`       | Double-precision floating point.                 |
+| **`NUMERIC`, `SQL_DECIMAL`**                                                        | `SQL_C_WCHAR`    | `string`       | Fetched as strings to preserve full precision.   |
+| **`CHAR`, `VARCHAR`, `LONGVARCHAR`**<br>**`SQL_WCHAR`, `WVARCHAR`, `WLONGVARCHAR`** | `SQL_C_WCHAR`    | `string`       | All text types are normalized to UTF-16 strings. |
+| **`TYPE_DATE`, `TIMESTAMP`**                                                        | `SQL_C_WCHAR`    | `string`       | Fetched as text strings (ISO format).            |
+| **`BINARY`, `VARBINARY`, `LONGVARBINARY`**                                          | `SQL_C_BINARY`   | `Uint8Array`   | Returns a copy of the raw binary bytes.          |
 
 ## Architecture
 

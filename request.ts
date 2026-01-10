@@ -188,8 +188,8 @@ export class OdbcRequest<R> {
     // NULL
     if (val === null || typeof val === "undefined" || val === undefined) {
       return {
-        cType: 1, // dummy
-        sqlType: 1, // dummy
+        cType: ValueType.SQL_C_CHAR, // dummy
+        sqlType: ParameterType.SQL_CHAR, // dummy
         buf: new Uint8Array(),
         columnSize: 0n,
         decimalDigits: 0,
@@ -269,9 +269,49 @@ export class OdbcRequest<R> {
       };
     }
 
-    throw new Error(`Unsupported data type: ${val} (Type ${typeof val})`);
+    if (ArrayBuffer.isView(val)) {
+      const buf = new Uint8Array(val.buffer, val.byteOffset, val.byteLength);
+      const bufLen = BigInt(buf.byteLength);
+      return {
+        cType: ValueType.SQL_C_BINARY,
+        sqlType: ParameterType.SQL_VARBINARY,
+        buf: buf as unknown as Uint8Array<ArrayBuffer>,
+        columnSize: bufLen,
+        decimalDigits: 0,
+        bufLen,
+        lenIndBuf: new BigInt64Array([bufLen]),
+      };
+    }
 
-    // TODO: implement Dates + Buffers
+    if (val instanceof Date) {
+      if (isNaN(val.getTime())) {
+        throw new Error("Cannot bind Invalid Date object");
+      }
+      const buf = new Uint8Array(16);
+      const view = new DataView(buf.buffer);
+
+      view.setInt16(0, val.getUTCFullYear(), true);
+      view.setUint16(2, val.getUTCMonth() + 1, true);
+      view.setUint16(4, val.getUTCDate(), true);
+      view.setUint16(6, val.getUTCHours(), true);
+      view.setUint16(8, val.getUTCMinutes(), true);
+      view.setUint16(10, val.getUTCSeconds(), true);
+      view.setUint32(12, val.getUTCMilliseconds() * 1_000_000, true);
+
+      const bufLen = 16n;
+
+      return {
+        cType: ValueType.SQL_C_TYPE_TIMESTAMP,
+        sqlType: ParameterType.SQL_TYPE_TIMESTAMP,
+        buf,
+        columnSize: 27n,
+        decimalDigits: 7,
+        bufLen,
+        lenIndBuf: new BigInt64Array([bufLen]),
+      };
+    }
+
+    throw new Error(`Unsupported data type: ${val} (Type ${typeof val})`);
   }
 
   #getColBinding(dataType: number, columnSize: bigint): ColBinding {

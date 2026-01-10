@@ -1,31 +1,34 @@
 export enum HandleType {
+  // found in sql.h
   SQL_HANDLE_ENV = 1,
   SQL_HANDLE_DBC = 2,
   SQL_HANDLE_STMT = 3,
 }
 
 export enum SQLRETURN {
+  // found in sql.h
   SQL_SUCCESS = 0,
   SQL_SUCCESS_WITH_INFO = 1,
+  SQL_NO_DATA = 100,
   SQL_ERROR = -1,
   SQL_INVALID_HANDLE = -2,
-  SQL_NO_DATA = 100,
   SQL_STILL_EXECUTING = 2,
   SQL_NEED_DATA = 99,
   SQL_PARAM_DATA_AVAILABLE = 101,
 }
 
 export enum ValueType {
+  SQL_C_CHAR = 1,
+  SQL_C_DOUBLE = 8,
+  SQL_C_BIT = -7,
+  SQL_C_BINARY = -2,
+  SQL_C_WCHAR = -8,
+  // found in sqlext.h
   SQL_C_SLONG = -16,
   SQL_C_SBIGINT = -25,
   SQL_C_UTINYINT = -28,
   SQL_C_SSHORT = -15,
-  SQL_C_DOUBLE = 8,
-  SQL_C_BIT = -7,
-  SQL_C_TYPE_TIMESTAMP = 11,
-  SQL_C_BINARY = -2,
-  SQL_C_WCHAR = -8,
-  DUMMY = 1,
+  SQL_C_TYPE_TIMESTAMP = 93,
 }
 
 export enum ParameterType {
