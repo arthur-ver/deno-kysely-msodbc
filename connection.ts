@@ -40,10 +40,7 @@ export class OdbcConnection implements DatabaseConnection {
       this.#envHandle,
     );
     try {
-      await this.#odbcLib.driverConnect(
-        this.#connString,
-        this.#dbcHandle,
-      );
+      await this.#odbcLib.driverConnect(this.#connString, this.#dbcHandle);
     } catch (error) {
       this.#hasSocketError = true;
       throw error;
@@ -120,19 +117,52 @@ export class OdbcConnection implements DatabaseConnection {
     }
   }
 
-  async rollbackTransaction(): Promise<void> {
+  async rollbackTransaction(savepointName?: string): Promise<void> {
     if (!this.#dbcHandle) {
       throw new Error("Connection is closed");
     }
 
-    try {
-      await this.#odbcLib.endTransaction(
-        this.#dbcHandle,
-        TxCompletionType.SQL_ROLLBACK,
+    if (savepointName) {
+      this.#testCheckpoint(savepointName);
+
+      const compiledQuery = CompiledQuery.raw(
+        `ROLLBACK TRANSACTION ${savepointName}`,
       );
-    } finally {
-      this.#cleanupTransactionState();
+      const request = new OdbcRequest<unknown>(
+        this.#odbcLib,
+        compiledQuery,
+        this.#dbcHandle,
+      );
+      await request.execute();
+      // NOTE: This leaves the transaction ACTIVE, so we do NOT call cleanupTransactionState().
+    } else {
+      try {
+        await this.#odbcLib.endTransaction(
+          this.#dbcHandle,
+          TxCompletionType.SQL_ROLLBACK,
+        );
+      } finally {
+        this.#cleanupTransactionState();
+      }
     }
+  }
+
+  async savepoint(savepointName: string): Promise<void> {
+    if (!this.#dbcHandle) {
+      throw new Error("Connection is closed");
+    }
+
+    this.#testCheckpoint(savepointName);
+
+    const compiledQuery = CompiledQuery.raw(
+      `SAVE TRANSACTION ${savepointName}`,
+    );
+    const request = new OdbcRequest<unknown>(
+      this.#odbcLib,
+      compiledQuery,
+      this.#dbcHandle,
+    );
+    await request.execute();
   }
 
   async destroy(): Promise<void> {
@@ -147,10 +177,7 @@ export class OdbcConnection implements DatabaseConnection {
   }
 
   async validate(): Promise<boolean> {
-    if (
-      this.#hasSocketError ||
-      this.#dbcHandle === null
-    ) {
+    if (this.#hasSocketError || this.#dbcHandle === null) {
       return false;
     }
 
@@ -207,5 +234,13 @@ export class OdbcConnection implements DatabaseConnection {
       SQL_ATTR_TXN_ISOLATION,
       isolationLevelPtr,
     );
+  }
+
+  #testCheckpoint(savepointName: string) {
+    if (!/^[a-zA-Z0-9_]+$/.test(savepointName)) {
+      throw new Error(
+        `Security Error: Invalid savepoint name "${savepointName}"`,
+      );
+    }
   }
 }

@@ -89,8 +89,19 @@ export class OdbcDriver implements Driver {
     await connection.rollbackTransaction();
   }
 
-  // TODO: async savepoint()
-  // TODO: async rollbackToSavepoint()
+  async savepoint(
+    connection: OdbcConnection,
+    savepointName: string,
+  ): Promise<void> {
+    await connection.savepoint(savepointName);
+  }
+
+  async rollbackToSavepoint(
+    connection: OdbcConnection,
+    savepointName: string,
+  ): Promise<void> {
+    await connection.rollbackTransaction(savepointName);
+  }
 
   async releaseConnection(connection: OdbcConnection): Promise<void> {
     if (this.#config.resetConnectionsOnRelease) {
