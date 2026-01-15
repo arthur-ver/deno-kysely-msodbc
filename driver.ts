@@ -30,12 +30,13 @@ export class OdbcDriver implements Driver {
   readonly #config: OdbcDialectConfig;
   readonly #pool: Pool<OdbcConnection>;
   readonly #odbcLib: OdbcLib;
+  readonly #odbcVer = 380;
 
   #envHandle: Deno.PointerValue = null;
 
   constructor(config: OdbcDialectConfig) {
     this.#config = Object.freeze({ ...config });
-    this.#odbcLib = new OdbcLib(this.#config.odbc.libPath);
+    this.#odbcLib = new OdbcLib(this.#config.odbc.libPath, this.#odbcVer);
 
     this.#pool = new Pool({
       ...this.#config.tarn.options,
@@ -68,6 +69,7 @@ export class OdbcDriver implements Driver {
       HandleType.SQL_HANDLE_ENV,
       null,
     );
+    this.#odbcLib.setOdbcVersion(this.#envHandle);
   }
 
   async acquireConnection(): Promise<DatabaseConnection> {

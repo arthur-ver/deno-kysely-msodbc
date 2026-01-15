@@ -62,6 +62,8 @@ export enum CType {
 
 export const SQL_PARAM_INPUT = 1;
 export const SQL_NULL_DATA = -1;
+export const SQL_NO_TOTAL = -4;
+const SQL_ATTR_ODBC_VERSION = 200;
 
 export const SQL_DRIVER_NOPROMPT = 0;
 export const SQL_NTS = -3;
@@ -120,6 +122,18 @@ const libDefinitions = {
   SQLFetch: {
     parameters: [
       "pointer", // SQLHSTMT <- in
+    ],
+    result: "i16",
+    nonblocking: true,
+  },
+  SQLGetData: {
+    parameters: [
+      "pointer", // SQLHSTMT <- in
+      "u16", // SQLUSMALLINT <- in
+      "i16", // SQLSMALLINT <- in
+      "buffer", // SQLPOINTER -> out
+      "i64", // SQLLEN <- in
+      "buffer", // SQLLEN * -> out
     ],
     result: "i16",
     nonblocking: true,
@@ -225,15 +239,26 @@ const libDefinitions = {
     ],
     result: "i16",
   },
+  SQLSetEnvAttr: {
+    parameters: [
+      "pointer", // SQLHENV <- in
+      "i32", // SQLINTEGER <- in
+      "pointer", // SQLPOINTER <- in
+      "i32", // SQLINTEGER <- in
+    ],
+    result: "i16",
+  },
 } as const;
 
 export class OdbcLib {
   readonly #dylib: Deno.DynamicLibrary<typeof libDefinitions>;
   readonly #symbols: OdbcSymbols;
+  readonly #odbcVer: Deno.PointerValue;
 
-  constructor(libPath: string) {
+  constructor(libPath: string, odbcVer: number) {
     this.#dylib = Deno.dlopen(libPath, libDefinitions);
     this.#symbols = this.#dylib.symbols;
+    this.#odbcVer = Deno.UnsafePointer.create(BigInt(odbcVer));
   }
 
   allocHandle(
@@ -274,6 +299,26 @@ export class OdbcLib {
       status !== SQLRETURN.SQL_SUCCESS
     ) {
       throw new Error(`SQLFreeHandle failed: ${SQLRETURN[status]}`);
+    }
+  }
+
+  setOdbcVersion(envHandle: Deno.PointerValue): void {
+    const status = this.#symbols.SQLSetEnvAttr(
+      envHandle,
+      SQL_ATTR_ODBC_VERSION,
+      this.#odbcVer,
+      0, // ignored
+    );
+
+    if (
+      status !== SQLRETURN.SQL_SUCCESS &&
+      status !== SQLRETURN.SQL_SUCCESS_WITH_INFO
+    ) {
+      const errorDetail = this.getOdbcError(
+        HandleType.SQL_HANDLE_ENV,
+        envHandle,
+      );
+      throw new Error(`SQLSetEnvAttr failed:\n${errorDetail}`);
     }
   }
 
@@ -505,12 +550,12 @@ export class OdbcLib {
       );
     }
 
-    const name = bufToStr(nameBuf, nameLenIndBuf[0]);
+    const colName = bufToStr(nameBuf, nameLenIndBuf[0]);
 
     return {
-      name,
-      dataType: dataTypeBuf[0],
-      columnSize: columnSizeBuf[0],
+      colName,
+      sqlType: dataTypeBuf[0],
+      colSize: columnSizeBuf[0],
       decimalDigits: decimalDigitsBuf[0],
       isNullable: nullableBuf[0] === 1,
     };
@@ -550,18 +595,60 @@ export class OdbcLib {
 
   async fetch(
     stmtHandle: Deno.PointerValue,
-  ): ReturnType<OdbcSymbols["SQLFetch"]> {
+  ): Promise<boolean> {
     const status = await this.#symbols.SQLFetch(
       stmtHandle,
     );
 
-    if (status === SQLRETURN.SQL_ERROR) {
-      throw new Error(`SQLFetch failed: ${
-        this.getOdbcError(
-          HandleType.SQL_HANDLE_STMT,
-          stmtHandle,
-        )
-      }`);
+    if (status === SQLRETURN.SQL_NO_DATA) return false;
+
+    if (
+      status !== SQLRETURN.SQL_SUCCESS &&
+      status !== SQLRETURN.SQL_SUCCESS_WITH_INFO
+    ) {
+      throw new Error(
+        `SQLFetch failed: ${
+          this.getOdbcError(
+            HandleType.SQL_HANDLE_STMT,
+            stmtHandle,
+          )
+        }\n`,
+      );
+    }
+
+    return true;
+  }
+
+  async getData(
+    stmtHandle: Deno.PointerValue,
+    colNumber: number,
+    cType: CType,
+    buf: BufferSource,
+    bufLen: bigint,
+    indLenBuf: BufferSource,
+  ): ReturnType<OdbcSymbols["SQLGetData"]> {
+    const status = await this.#symbols.SQLGetData(
+      stmtHandle,
+      colNumber,
+      cType,
+      buf,
+      bufLen,
+      indLenBuf,
+    );
+
+    if (
+      status !== SQLRETURN.SQL_SUCCESS &&
+      status !== SQLRETURN.SQL_SUCCESS_WITH_INFO &&
+      status !== SQLRETURN.SQL_NO_DATA
+    ) {
+      throw new Error(
+        `SQLGetData failed: ${
+          this.getOdbcError(
+            HandleType.SQL_HANDLE_STMT,
+            stmtHandle,
+          )
+        }`,
+      );
     }
 
     return status;
@@ -977,6 +1064,61 @@ interface OdbcSymbols {
    */
   SQLSetConnectAttrW(
     connectionHandle: Deno.PointerValue,
+    attribute: number,
+    valuePtr: Deno.PointerValue,
+    stringLength: number,
+  ):
+    | SQLRETURN.SQL_SUCCESS
+    | SQLRETURN.SQL_SUCCESS_WITH_INFO
+    | SQLRETURN.SQL_ERROR
+    | SQLRETURN.SQL_INVALID_HANDLE;
+
+  /**
+   * `SQLGetData` retrieves data for a single column in the result set or for a single parameter after SQLParamData returns SQL_PARAM_DATA_AVAILABLE. It can be called multiple times to retrieve variable-length data in parts.
+   *
+   * ```cpp
+   * SQLRETURN SQLGetData(
+   *       SQLHSTMT       StatementHandle,
+   *       SQLUSMALLINT   Col_or_Param_Num,
+   *       SQLSMALLINT    TargetType,
+   *       SQLPOINTER     TargetValuePtr,
+   *       SQLLEN         BufferLength,
+   *       SQLLEN *       StrLen_or_IndPtr);
+   * ```
+   *
+   * @see {@link https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function?view=sql-server-ver17}
+   */
+  SQLGetData(
+    StatementHandle: Deno.PointerValue,
+    col_or_Param_Num: number,
+    targetType: CType,
+    targetValuePtr: BufferSource,
+    bufferLength: bigint,
+    strLen_or_IndPtr: BufferSource,
+  ): Promise<
+    | SQLRETURN.SQL_SUCCESS
+    | SQLRETURN.SQL_SUCCESS_WITH_INFO
+    | SQLRETURN.SQL_NO_DATA
+    | SQLRETURN.SQL_STILL_EXECUTING
+    | SQLRETURN.SQL_ERROR
+    | SQLRETURN.SQL_INVALID_HANDLE
+  >;
+
+  /**
+   * `SQLSetEnvAttr` sets attributes that govern aspects of environments.
+   *
+   * ```cpp
+   * SQLRETURN SQLSetEnvAttr(
+   *      SQLHENV      EnvironmentHandle,
+   *      SQLINTEGER   Attribute,
+   *      SQLPOINTER   ValuePtr,
+   *      SQLINTEGER   StringLength);
+   * ```
+   *
+   * @see {@link https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlsetenvattr-function?view=sql-server-ver17}
+   */
+  SQLSetEnvAttr(
+    environmentHandle: Deno.PointerValue,
     attribute: number,
     valuePtr: Deno.PointerValue,
     stringLength: number,

@@ -4,6 +4,7 @@ import {
   CType,
   HandleType,
   type OdbcLib,
+  SQL_NO_TOTAL,
   SQL_NTS,
   SQL_NULL_DATA,
   SQLRETURN,
@@ -11,9 +12,11 @@ import {
   strToBuf,
 } from "./odbc.ts";
 
-const MAX_BIND_SIZE = 65536n; // 64kb
+const MAX_BIND_SIZE = 4096n; // 4kb
 
 type ColBinding = {
+  colNumber: number;
+  isBound: boolean;
   cType: CType;
   buf:
     | Uint8Array<ArrayBuffer>
@@ -34,7 +37,7 @@ type ParamBinding = {
     | BigInt64Array<ArrayBuffer>
     | Uint8Array<ArrayBuffer>
     | Float64Array<ArrayBuffer>;
-  columnSize: bigint;
+  colSize: bigint;
   decimalDigits: number;
   bufLen: bigint;
   lenIndBuf: BigInt64Array<ArrayBuffer>;
@@ -151,7 +154,7 @@ export class OdbcRequest<R> {
         i,
         odbcParam.cType,
         odbcParam.sqlType,
-        odbcParam.columnSize,
+        odbcParam.colSize,
         odbcParam.decimalDigits,
         odbcParam.buf,
         odbcParam.bufLen,
@@ -163,37 +166,66 @@ export class OdbcRequest<R> {
     }
   }
 
-  #bindCols(colCount: number) {
-    for (let i = 1; i <= colCount; i++) {
-      const desc = this.#odbcLib.describeCol(this.#stmtHandle, i);
+  #bindCols(colCount: number): void {
+    /**
+     * We use the following column binding strategy:
+     * 1. Bind columns as long as they fit in our buffer.
+     * 2. If we encounter a Large Object or MAX type, we stop binding.
+     * 3. That column and ALL subsequent columns must be retrieved manually via
+     * SQLGetData to respect the ODBC forward-only cursor rule.
+     */
+    let manualGetDataMode = false;
 
-      let allocSize = desc.columnSize;
-      if (allocSize === 0n || allocSize > MAX_BIND_SIZE) { // TODO: for MAX, use SQLGetData
+    for (let i = 1; i <= colCount; i++) {
+      const { colName, colSize, sqlType } = this.#odbcLib.describeCol(
+        this.#stmtHandle,
+        i,
+      );
+
+      const isSmallColumn = colSize !== 0n &&
+        colSize <= MAX_BIND_SIZE &&
+        sqlType !== SQLType.SQL_LONGVARCHAR &&
+        sqlType !== SQLType.SQL_WLONGVARCHAR &&
+        sqlType !== SQLType.SQL_LONGVARBINARY;
+
+      if (!isSmallColumn) manualGetDataMode = true;
+
+      let allocSize = colSize;
+      if (allocSize === 0n || allocSize > MAX_BIND_SIZE) {
         allocSize = MAX_BIND_SIZE;
       }
 
-      const binding = this.#getColBinding(desc.dataType, allocSize);
+      const isBound = !manualGetDataMode;
 
-      this.#odbcLib.bindCol(
-        this.#stmtHandle,
+      const binding = this.#getColBinding(
         i,
-        binding.cType,
-        binding.buf,
-        binding.bufLen,
-        binding.lenIndBuf,
+        isBound,
+        sqlType,
+        allocSize,
       );
-      this.#colBindings.set(desc.name, binding);
+
+      if (isBound) {
+        this.#odbcLib.bindCol(
+          this.#stmtHandle,
+          i,
+          binding.cType,
+          binding.buf,
+          binding.bufLen,
+          binding.lenIndBuf,
+        );
+      }
+
+      this.#colBindings.set(colName, binding);
     }
   }
 
   #getParamBinding(val: unknown): ParamBinding {
-    // NULL
     if (val === null || typeof val === "undefined" || val === undefined) {
       return {
         cType: CType.SQL_C_CHAR, // dummy
         sqlType: SQLType.SQL_CHAR, // dummy
         buf: new Uint8Array(),
-        columnSize: 0n,
+        colSize: 0n,
         decimalDigits: 0,
         bufLen: 0n,
         lenIndBuf: new BigInt64Array([BigInt(SQL_NULL_DATA)]),
@@ -211,7 +243,7 @@ export class OdbcRequest<R> {
           cType: CType.SQL_C_SLONG,
           sqlType: SQLType.SQL_INTEGER,
           buf: new Int32Array([Number(val)]),
-          columnSize: 0n, // ignored by SQLBindParameter for this data type
+          colSize: 0n,
           decimalDigits: 0, // ignored by SQLBindParameter for this data type
           bufLen,
           lenIndBuf: new BigInt64Array([bufLen]),
@@ -223,7 +255,7 @@ export class OdbcRequest<R> {
           cType: CType.SQL_C_SBIGINT,
           sqlType: SQLType.SQL_BIGINT,
           buf: new BigInt64Array([BigInt(val)]),
-          columnSize: 0n, // ignored by SQLBindParameter for this data type
+          colSize: 0n,
           decimalDigits: 0, // ignored by SQLBindParameter for this data type
           bufLen,
           lenIndBuf: new BigInt64Array([bufLen]),
@@ -237,7 +269,7 @@ export class OdbcRequest<R> {
         cType: CType.SQL_C_DOUBLE,
         sqlType: SQLType.SQL_FLOAT,
         buf: new Float64Array([val]),
-        columnSize: 0n, // ignored by SQLBindParameter for this data type
+        colSize: 0n,
         decimalDigits: 0, // ignored by SQLBindParameter for this data type
         bufLen,
         lenIndBuf: new BigInt64Array([bufLen]),
@@ -250,7 +282,7 @@ export class OdbcRequest<R> {
         cType: CType.SQL_C_BIT,
         sqlType: SQLType.SQL_BIT,
         buf: new Uint8Array([val ? 1 : 0]),
-        columnSize: 0n, // ignored by SQLBindParameter for this data type
+        colSize: 0n,
         decimalDigits: 0, // ignored by SQLBindParameter for this data type
         bufLen,
         lenIndBuf: new BigInt64Array([bufLen]),
@@ -259,14 +291,15 @@ export class OdbcRequest<R> {
 
     if (typeof val === "string") {
       const charLength = val.length;
-      const bufLen = (charLength + 1) * 2;
+      const buf = strToBuf(val);
+      const isLong = charLength > 4000;
       return {
         cType: CType.SQL_C_WCHAR,
         sqlType: SQLType.SQL_WVARCHAR,
-        buf: strToBuf(val),
-        columnSize: BigInt(charLength), // charLength
-        decimalDigits: 0, // ignored by SQLBindParameter for this data type
-        bufLen: BigInt(bufLen),
+        buf,
+        colSize: isLong ? 0n : 4000n, // size 0 implies MAX
+        decimalDigits: 0,
+        bufLen: BigInt(buf.length),
         lenIndBuf: new BigInt64Array([BigInt(SQL_NTS)]),
       };
     }
@@ -274,11 +307,14 @@ export class OdbcRequest<R> {
     if (ArrayBuffer.isView(val)) {
       const buf = new Uint8Array(val.buffer, val.byteOffset, val.byteLength);
       const bufLen = BigInt(buf.byteLength);
+      const isLong = bufLen > 8000n;
       return {
         cType: CType.SQL_C_BINARY,
         sqlType: SQLType.SQL_VARBINARY,
-        buf: buf as unknown as Uint8Array<ArrayBuffer>,
-        columnSize: bufLen,
+        buf: bufLen === 0n
+          ? new Uint8Array(1) // prevents passing a NULL pointer for empty buffers
+          : buf as unknown as Uint8Array<ArrayBuffer>,
+        colSize: isLong ? 0n : 8000n,
         decimalDigits: 0,
         bufLen,
         lenIndBuf: new BigInt64Array([bufLen]),
@@ -306,7 +342,7 @@ export class OdbcRequest<R> {
         cType: CType.SQL_C_TYPE_TIMESTAMP,
         sqlType: SQLType.SQL_TYPE_TIMESTAMP,
         buf,
-        columnSize: 27n,
+        colSize: 27n,
         decimalDigits: 7,
         bufLen,
         lenIndBuf: new BigInt64Array([bufLen]),
@@ -316,11 +352,18 @@ export class OdbcRequest<R> {
     throw new Error(`Unsupported data type: ${val} (Type ${typeof val})`);
   }
 
-  #getColBinding(dataType: number, columnSize: bigint): ColBinding {
+  #getColBinding(
+    colNumber: number,
+    isBound: boolean,
+    sqlType: SQLType,
+    colSize: bigint,
+  ): ColBinding {
     const createInd = () => new BigInt64Array(1);
 
-    if (dataType === SQLType.SQL_INTEGER) {
+    if (sqlType === SQLType.SQL_INTEGER) {
       return {
+        colNumber,
+        isBound,
         cType: CType.SQL_C_SLONG,
         buf: new Int32Array(1),
         bufLen: 4n,
@@ -328,8 +371,10 @@ export class OdbcRequest<R> {
       };
     }
 
-    if (dataType === SQLType.SQL_BIGINT) {
+    if (sqlType === SQLType.SQL_BIGINT) {
       return {
+        colNumber,
+        isBound,
         cType: CType.SQL_C_SBIGINT,
         buf: new BigInt64Array(1),
         bufLen: 8n,
@@ -337,8 +382,10 @@ export class OdbcRequest<R> {
       };
     }
 
-    if (dataType === SQLType.SQL_TINYINT) {
+    if (sqlType === SQLType.SQL_TINYINT) {
       return {
+        colNumber,
+        isBound,
         cType: CType.SQL_C_UTINYINT,
         buf: new Uint8Array(1),
         bufLen: 1n,
@@ -346,8 +393,10 @@ export class OdbcRequest<R> {
       };
     }
 
-    if (dataType === SQLType.SQL_SMALLINT) {
+    if (sqlType === SQLType.SQL_SMALLINT) {
       return {
+        colNumber,
+        isBound,
         cType: CType.SQL_C_SSHORT,
         buf: new Int16Array(1),
         bufLen: 2n,
@@ -357,11 +406,13 @@ export class OdbcRequest<R> {
 
     // Safest way is to bind SQL_NUMERIC and SQL_DECIMAL as strings since JS could loose precision when treating these as numbers
     if (
-      dataType === SQLType.SQL_NUMERIC ||
-      dataType === SQLType.SQL_DECIMAL
+      sqlType === SQLType.SQL_NUMERIC ||
+      sqlType === SQLType.SQL_DECIMAL
     ) {
-      const len = Number(columnSize) + 4;
+      const len = Number(colSize) + 4;
       return {
+        colNumber,
+        isBound,
         cType: CType.SQL_C_WCHAR,
         buf: new Uint16Array(len),
         bufLen: BigInt(len * 2),
@@ -369,8 +420,10 @@ export class OdbcRequest<R> {
       };
     }
 
-    if (dataType === SQLType.SQL_FLOAT) {
+    if (sqlType === SQLType.SQL_FLOAT) {
       return {
+        colNumber,
+        isBound,
         cType: CType.SQL_C_DOUBLE,
         buf: new Float64Array(1),
         bufLen: 8n,
@@ -378,8 +431,10 @@ export class OdbcRequest<R> {
       };
     }
 
-    if (dataType === SQLType.SQL_BIT) {
+    if (sqlType === SQLType.SQL_BIT) {
       return {
+        colNumber,
+        isBound,
         cType: CType.SQL_C_BIT,
         buf: new Uint8Array(1),
         bufLen: 1n,
@@ -388,29 +443,33 @@ export class OdbcRequest<R> {
     }
 
     if (
-      dataType === SQLType.SQL_BINARY ||
-      dataType === SQLType.SQL_VARBINARY ||
-      dataType === SQLType.SQL_LONGVARBINARY
+      sqlType === SQLType.SQL_BINARY ||
+      sqlType === SQLType.SQL_VARBINARY ||
+      sqlType === SQLType.SQL_LONGVARBINARY
     ) {
-      const len = Number(columnSize);
+      const len = Number(colSize);
       return {
+        colNumber,
+        isBound,
         cType: CType.SQL_C_BINARY,
         buf: new Uint8Array(len),
-        bufLen: BigInt(len),
+        bufLen: colSize,
         lenIndBuf: createInd(),
       };
     }
 
     if (
-      dataType === SQLType.SQL_CHAR ||
-      dataType === SQLType.SQL_VARCHAR ||
-      dataType === SQLType.SQL_LONGVARCHAR ||
-      dataType === SQLType.SQL_WCHAR ||
-      dataType === SQLType.SQL_WVARCHAR ||
-      dataType === SQLType.SQL_WLONGVARCHAR
+      sqlType === SQLType.SQL_CHAR ||
+      sqlType === SQLType.SQL_VARCHAR ||
+      sqlType === SQLType.SQL_LONGVARCHAR ||
+      sqlType === SQLType.SQL_WCHAR ||
+      sqlType === SQLType.SQL_WVARCHAR ||
+      sqlType === SQLType.SQL_WLONGVARCHAR
     ) {
-      const len = Number(columnSize) + 1; // +1 for null terminator
+      const len = Number(colSize) + 1; // +1 for null terminator
       return {
+        colNumber,
+        isBound,
         cType: CType.SQL_C_WCHAR,
         buf: new Uint16Array(len),
         bufLen: BigInt(len * 2),
@@ -419,11 +478,13 @@ export class OdbcRequest<R> {
     }
 
     if (
-      dataType === SQLType.SQL_TYPE_TIMESTAMP ||
-      dataType === SQLType.SQL_TYPE_DATE
+      sqlType === SQLType.SQL_TYPE_TIMESTAMP ||
+      sqlType === SQLType.SQL_TYPE_DATE
     ) {
       const len = 50; // Sufficient for "YYYY-MM-DD HH:MM:SS.FFF..."
       return {
+        colNumber,
+        isBound,
         cType: CType.SQL_C_WCHAR,
         buf: new Uint16Array(len),
         bufLen: BigInt(len * 2),
@@ -431,22 +492,120 @@ export class OdbcRequest<R> {
       };
     }
 
-    throw new Error(`Unsupported SQL dataType: ${dataType}`);
+    throw new Error(`Unsupported SQL dataType: ${sqlType}`);
   }
 
-  #readRow(bindings: Map<string, ColBinding>) {
+  async #fetchRemainingData(
+    colBinding: ColBinding,
+    initialChunk: Uint8Array | string,
+  ): Promise<Uint8Array | string> {
+    const { colNumber, cType, buf, bufLen, lenIndBuf } = colBinding;
+
+    const chunks: (Uint8Array | string)[] = [initialChunk];
+
+    while (true) {
+      const status = await this.#odbcLib.getData(
+        this.#stmtHandle,
+        colNumber,
+        cType,
+        buf,
+        bufLen,
+        lenIndBuf,
+      );
+
+      if (status === SQLRETURN.SQL_NO_DATA) break;
+
+      const byteLen = Number(lenIndBuf[0]);
+      if (byteLen === SQL_NULL_DATA) break;
+
+      const isTruncated = status !== SQLRETURN.SQL_SUCCESS;
+
+      if (cType === CType.SQL_C_WCHAR) {
+        let validChars = 0;
+
+        if (isTruncated) {
+          validChars = Number(bufLen) / 2;
+          if (buf[validChars - 1] === 0) validChars--;
+        } else {
+          validChars = byteLen / 2;
+        }
+
+        if (validChars > buf.length) validChars = buf.length;
+
+        chunks.push(bufToStr(buf as Uint16Array, validChars));
+      } else {
+        const validBytes = isTruncated ? Number(bufLen) : byteLen;
+        chunks.push((buf as Uint8Array).slice(0, validBytes));
+      }
+
+      if (!isTruncated) break;
+    }
+
+    if (cType === CType.SQL_C_WCHAR) {
+      return chunks.join("");
+    } else {
+      const totalLen = chunks.reduce((acc, p) => acc + p.length, 0);
+      const res = new Uint8Array(totalLen);
+      let offset = 0;
+      for (const p of chunks) {
+        const u8 = p as Uint8Array;
+        res.set(u8, offset);
+        offset += u8.length;
+      }
+      return res;
+    }
+  }
+
+  async #readRow(): Promise<Record<string, unknown>> {
     const row: Record<string, unknown> = {};
 
-    for (const [colName, { buf, lenIndBuf, cType }] of bindings) {
-      const byteLen = Number(lenIndBuf[0]);
+    for (const [colName, colBinding] of this.#colBindings) {
+      const { buf, lenIndBuf, cType, bufLen, isBound, colNumber } = colBinding;
 
-      if (byteLen === SQL_NULL_DATA) {
-        row[colName] = null;
-        continue;
+      /**
+       * This can either be the length of the data after conversion and before truncation,
+       * or SQL_NO_TOTAL if the driver cannot determine the length of the data after conversion,
+       * or SQL_NULL_DATA if the data is NULL.
+       */
+      let byteLen: number;
+      let isTruncated = false;
+
+      if (isBound) {
+        byteLen = Number(lenIndBuf[0]);
+
+        if (byteLen === SQL_NULL_DATA) {
+          row[colName] = null;
+          continue;
+        }
+
+        isTruncated = byteLen > Number(bufLen) || byteLen === SQL_NO_TOTAL;
+      } else {
+        const status = await this.#odbcLib.getData(
+          this.#stmtHandle,
+          colNumber,
+          cType,
+          buf,
+          bufLen,
+          lenIndBuf,
+        );
+
+        byteLen = Number(lenIndBuf[0]);
+
+        if (status === SQLRETURN.SQL_NO_DATA || byteLen === SQL_NULL_DATA) {
+          row[colName] = null;
+          continue;
+        }
+
+        // For Unbound columns, the Status Code explicitly tells us if truncated
+        isTruncated = status !== SQLRETURN.SQL_SUCCESS;
       }
 
       let value: number | string | bigint | boolean | Uint8Array;
+
       switch (cType) {
+        /**
+         * Fixed-length data types:
+         */
         case CType.SQL_C_SLONG:
         case CType.SQL_C_SBIGINT:
         case CType.SQL_C_DOUBLE:
@@ -459,13 +618,38 @@ export class OdbcRequest<R> {
           value = buf[0] === 1;
           break;
 
-        case CType.SQL_C_BINARY:
-          value = (buf as Uint8Array).slice(0, byteLen);
-          break;
+        /**
+         * Variable-length data types:
+         */
+        case CType.SQL_C_BINARY: {
+          const validBytes = isTruncated ? Number(bufLen) : byteLen;
+          const initialChunk = (buf as Uint8Array).slice(0, validBytes);
 
-        case CType.SQL_C_WCHAR:
-          value = bufToStr(buf as Uint16Array, byteLen / 2);
+          value = isTruncated
+            ? await this.#fetchRemainingData(colBinding, initialChunk)
+            : initialChunk;
+
           break;
+        }
+
+        case CType.SQL_C_WCHAR: {
+          let validChars = 0;
+
+          if (isTruncated) {
+            validChars = Number(bufLen) / 2;
+            if (buf[validChars - 1] === 0) validChars--;
+          } else {
+            validChars = byteLen / 2;
+          }
+
+          const initialStr = bufToStr(buf as Uint16Array, validChars);
+
+          value = isTruncated
+            ? await this.#fetchRemainingData(colBinding, initialStr)
+            : initialStr;
+
+          break;
+        }
 
         // TODO: implement str -> Date conversion
 
@@ -480,33 +664,9 @@ export class OdbcRequest<R> {
   }
 
   async *#fetchRow(): AsyncGenerator<R> {
-    while (true) {
-      const status = await this.#odbcLib.fetch(this.#stmtHandle);
-
-      if (
-        status === SQLRETURN.SQL_SUCCESS ||
-        status === SQLRETURN.SQL_SUCCESS_WITH_INFO
-      ) {
-        yield this.#readRow(this.#colBindings) as R;
-
-        if (status === SQLRETURN.SQL_SUCCESS_WITH_INFO) {
-          // Run diagnostics
-        }
-        continue;
-      }
-
-      if (status === SQLRETURN.SQL_NO_DATA) break;
-
-      if (status === SQLRETURN.SQL_ERROR) {
-        throw new Error(`SQLFetch failed: ${
-          this.#odbcLib.getOdbcError(
-            HandleType.SQL_HANDLE_STMT,
-            this.#stmtHandle,
-          )
-        }`);
-      }
-
-      throw new Error(`SQLFetch returned unexpected status: ${status}`);
+    while (await this.#odbcLib.fetch(this.#stmtHandle)) {
+      const row = await this.#readRow();
+      yield row as R;
     }
   }
 }
