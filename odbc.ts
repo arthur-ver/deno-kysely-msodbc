@@ -92,9 +92,9 @@ const libDefinitions = {
   SQLDriverConnectW: {
     parameters: [
       "pointer", // SQLHDBC <- in
-      "pointer", // SQLHWND <- in
+      "pointer", // SQLHWND <- in (always NULL)
       "buffer", // SQLWCHAR * <- in
-      "i16", // SQLSMALLINT -> out
+      "i16", // SQLSMALLINT <- in
       "pointer", // SQLWCHAR * -> out (always NULL, so using pointer instead of buffer)
       "i16", // SQLSMALLINT <- in
       "pointer", // SQLSMALLINT * -> out (always NULL, so using pointer instead of buffer)
@@ -140,9 +140,9 @@ const libDefinitions = {
   },
   SQLEndTran: {
     parameters: [
-      "u16", // SQLSMALLINT <- in
+      "i16", // SQLSMALLINT <- in
       "pointer", // SQLHANDLE <- in
-      "u16", // SQLSMALLINT <- in
+      "i16", // SQLSMALLINT <- in
     ],
     result: "i16",
     nonblocking: true,
@@ -250,11 +250,11 @@ const libDefinitions = {
   },
   SQLGetInfoW: {
     parameters: [
-      "pointer",
-      "i16",
-      "buffer",
-      "i16",
-      "buffer",
+      "pointer", // SQLHDBC <- in
+      "u16", // SQLUSMALLINT <- in
+      "buffer", // SQLPOINTER -> out
+      "i16", // SQLSMALLINT <- in
+      "buffer", // SQLSMALLINT * -> out
     ],
     result: "i16",
   },
