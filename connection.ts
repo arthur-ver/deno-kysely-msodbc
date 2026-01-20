@@ -4,7 +4,7 @@ import {
   IsolationLevel,
   QueryResult,
   TransactionSettings,
-} from "@kysely/kysely";
+} from "kysely";
 import {
   HandleType,
   type OdbcLib,

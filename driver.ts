@@ -6,7 +6,7 @@ import {
   Driver,
   MssqlDialectConfig,
   TransactionSettings,
-} from "@kysely/kysely";
+} from "kysely";
 import { HandleType, OdbcLib } from "./odbc.ts";
 import { OdbcConnection } from "./connection.ts";
 

@@ -6,7 +6,7 @@ import {
   MssqlDialectConfig,
   MssqlQueryCompiler,
   QueryCompiler,
-} from "@kysely/kysely";
+} from "kysely";
 
 /**
  * MS SQL Server dialect that uses the Microsoft ODBC Driver for SQL Server
