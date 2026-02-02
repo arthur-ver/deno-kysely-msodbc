@@ -1,19 +1,19 @@
 name: Publish
 
 on:
-  push:
+  workflow_run:
+    workflows: ["Tests"]
+    types: [completed]
     branches: ["main"]
 
 jobs:
   publish:
     runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.repository_owner == 'arthur-ver' }}
 
     permissions:
       contents: read
       id-token: write
-
-    # Skip publishing for forks
-    if: github.repository_owner == 'arthur-ver'
 
     steps:
       - uses: actions/checkout@v6
