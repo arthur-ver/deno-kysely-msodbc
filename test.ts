@@ -1,4 +1,4 @@
-import { Generated, Kysely, sql } from "kysely";
+import { type Generated, Kysely, sql } from "@kysely/kysely";
 import { assertEquals, assertInstanceOf, assertRejects } from "@std/assert";
 import { MssqlOdbcDialect } from "./dialect.ts";
 

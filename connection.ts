@@ -1,10 +1,10 @@
 import {
   CompiledQuery,
-  DatabaseConnection,
-  IsolationLevel,
-  QueryResult,
-  TransactionSettings,
-} from "kysely";
+  type DatabaseConnection,
+  type IsolationLevel,
+  type QueryResult,
+  type TransactionSettings,
+} from "@kysely/kysely";
 import {
   HandleType,
   type OdbcLib,

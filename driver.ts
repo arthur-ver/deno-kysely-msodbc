@@ -1,12 +1,12 @@
 import { Pool } from "tarn";
 import type { PoolOptions } from "tarn/dist/Pool";
 
-import {
+import type {
   DatabaseConnection,
   Driver,
   MssqlDialectConfig,
   TransactionSettings,
-} from "kysely";
+} from "@kysely/kysely";
 import { HandleType, OdbcLib } from "./odbc.ts";
 import { OdbcConnection } from "./connection.ts";
 

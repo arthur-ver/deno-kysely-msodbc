@@ -1,12 +1,15 @@
 {
   "version": "5",
   "specifiers": {
+    "jsr:@kysely/kysely@~0.28.11": "0.28.11",
     "jsr:@std/assert@^1.0.16": "1.0.16",
     "jsr:@std/internal@^1.0.12": "1.0.12",
-    "npm:kysely@~0.28.10": "0.28.10",
     "npm:tarn@^3.0.2": "3.0.2"
   },
   "jsr": {
+    "@kysely/kysely@0.28.11": {
+      "integrity": "e7b2e545155098a20dda6728b06ffac933f2d342bca46ede9cd8cd89accdcc9e"
+    },
     "@std/assert@1.0.16": {
       "integrity": "6a7272ed1eaa77defe76e5ff63ca705d9c495077e2d5fd0126d2b53fc5bd6532",
       "dependencies": [
@@ -18,17 +21,14 @@
     }
   },
   "npm": {
-    "kysely@0.28.10": {
-      "integrity": "sha512-ksNxfzIW77OcZ+QWSAPC7yDqUSaIVwkTWnTPNiIy//vifNbwsSgQ57OkkncHxxpcBHM3LRfLAZVEh7kjq5twVA=="
-    },
     "tarn@3.0.2": {
       "integrity": "sha512-51LAVKUSZSVfI05vjPESNc5vwqqZpbXCsU+/+wxlOrUjk2SnFTt97v9ZgQrD4YmxYW1Px6w2KjaDitCfkvgxMQ=="
     }
   },
   "workspace": {
     "dependencies": [
+      "jsr:@kysely/kysely@~0.28.11",
       "jsr:@std/assert@^1.0.16",
-      "npm:kysely@~0.28.10",
       "npm:tarn@^3.0.2"
     ]
   }

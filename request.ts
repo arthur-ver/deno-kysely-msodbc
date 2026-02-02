@@ -1,4 +1,4 @@
-import { CompiledQuery, QueryResult } from "kysely";
+import type { CompiledQuery, QueryResult } from "@kysely/kysely";
 import {
   bufToStr,
   CType,
