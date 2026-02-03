@@ -522,7 +522,13 @@ export class OdbcLib {
   describeCol(
     stmtHandle: Deno.PointerValue,
     colNumber: number,
-  ) {
+  ): {
+    colName: string;
+    sqlType: number;
+    colSize: bigint;
+    decimalDigits: number;
+    isNullable: boolean;
+  } {
     const CHAR_LIMIT = 256;
 
     const nameBuf = new Uint16Array(CHAR_LIMIT);
