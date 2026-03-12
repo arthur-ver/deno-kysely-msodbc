@@ -9,8 +9,7 @@ import {
 } from "@kysely/kysely";
 
 /**
- * MS SQL Server dialect that uses the Microsoft ODBC Driver for SQL Server
- * library.
+ * Deno-specific Kysely dialect for MSSQL that binds to the native Microsoft ODBC Driver for SQL Server using Deno FFI.
  *
  * The constructor takes an instance of {@link OdbcDialectConfig}.
  *
@@ -24,7 +23,7 @@ import {
  *   },
  *   odbc: {
  *     libPath: "/opt/homebrew/lib/libmsodbcsql.18.dylib",
- *     connString: [
+ *     connectionString: [
  *       "driver={ODBC Driver 18 for SQL Server}",
  *       "server=127.0.0.1",
  *       "uid=sa",

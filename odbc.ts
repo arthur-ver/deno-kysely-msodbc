@@ -398,7 +398,7 @@ export class OdbcLib {
         status !== SQLRETURN.SQL_NO_DATA
       ) {
         throw new Error(
-          `Execution Error: ${
+          `SQLExecDirectW failed: ${
             this.getOdbcError(
               HandleType.SQL_HANDLE_STMT,
               stmtHandle,

@@ -1,9 +1,16 @@
 # deno-kysely-msodbcsql
 
-> This **MSSQL Kysely Driver for Deno** binds to the native **Microsoft ODBC
-> Driver for SQL Server** using Deno FFI.
-
+[![Deno](https://img.shields.io/badge/Deno-000?logo=deno)](https://github.com/denoland/deno)
 [![JSR](https://jsr.io/badges/@arthur-ver/deno-kysely-msodbcsql)](https://jsr.io/@arthur-ver/deno-kysely-msodbcsql)
+[![JSR](https://jsr.io/badges/@arthur-ver/deno-kysely-msodbcsql/total-downloads)](https://jsr.io/badges/@arthur-ver/deno-kysely-msodbcsql)
+![License](https://img.shields.io/github/license/arthur-ver/deno-kysely-msodbcsql)
+
+`deno-kysely-msodbcsql` is a [Deno](https://github.com/denoland/deno)-specific
+[Kysely](https://github.com/kysely-org/kysely) dialect for **MSSQL** that binds
+to the native
+[Microsoft ODBC Driver for SQL Server](https://learn.microsoft.com/en-us/sql/connect/odbc/download-odbc-driver-for-sql-server)
+using Deno FFI. [Tarn.js](https://github.com/Vincit/tarn.js) is used for
+connection pooling.
 
 ## Prerequisites
 
@@ -24,8 +31,17 @@ deno add jsr:@kysely/kysely jsr:@arthur-ver/deno-kysely-msodbcsql
 ## Usage
 
 ```ts
-import { Kysely } from "@kysely/kysely";
+import { type Generated, Kysely } from "@kysely/kysely";
 import { MssqlOdbcDialect } from "@arthur-ver/deno-kysely-msodbcsql";
+
+interface UserTable {
+  id: Generated<number>;
+  username: string;
+}
+
+interface Database {
+  user: UserTable;
+}
 
 const db = new Kysely<Database>({
   dialect: new MssqlOdbcDialect({
@@ -37,7 +53,7 @@ const db = new Kysely<Database>({
     },
     odbc: {
       libPath: "/opt/homebrew/lib/libmsodbcsql.18.dylib",
-      connString: [
+      connectionString: [
         "driver={ODBC Driver 18 for SQL Server}",
         "server=<host>",
         "database=<db>",
@@ -49,7 +65,45 @@ const db = new Kysely<Database>({
     },
   }),
 });
+
+const users = await db.selectFrom("user").selectAll().execute();
 ```
+
+## Configuration
+
+### `tarn.options`
+
+[Tarn.js](https://github.com/vincit/tarn.js)' pool options, excluding `create`,
+`destroy` and `validate` functions.
+
+### `odbc.libPath`
+
+The `libPath` property points directly to the dynamic library file of the
+Microsoft ODBC Driver installed on your system. The exact path depends on your
+operating system:
+
+| OS          | Path                                                        |
+| :---------- | :---------------------------------------------------------- |
+| **Windows** | `C:\Windows\System32\msodbcsql18.dll`                       |
+| **macOS**   | `/opt/homebrew/lib/libmsodbcsql.18.dylib`                   |
+| **Linux**   | `/opt/microsoft/msodbcsql18/lib64/libmsodbcsql-18.X.so.X.X` |
+
+### `odbc.connectionString`
+
+A typical connection string configuration includes:
+
+- `driver`: Must match the installed driver name (e.g.,
+  `{ODBC Driver 18 for SQL
+  Server}`).
+- `server`: Your database host or IP address.
+- `database`: The specific database name to connect to.
+- `uid` / `pwd`: Authentication credentials.
+- `encrypt` / `trustServerCertificate`: Often required for local or cloud
+  setups.
+
+Please refer to the
+[official Microsoft ODBC Driver documentation](https://learn.microsoft.com/en-us/sql/connect/odbc/dsn-connection-string-attribute)
+for a list of all available Connection String Keywords.
 
 ## Supported Data Types
 

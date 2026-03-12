@@ -59,7 +59,7 @@ Deno.test.beforeAll(async () => {
       },
       odbc: {
         libPath: Deno.env.get("MSODBC_LIB")!,
-        connString: [
+        connectionString: [
           "driver={ODBC Driver 18 for SQL Server}",
           "server=127.0.0.1",
           "uid=sa",
